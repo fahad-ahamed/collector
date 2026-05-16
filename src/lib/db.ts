@@ -181,21 +181,17 @@ export async function updateSessionHeartbeat(
     const now = new Date().toISOString();
     session.lastHeartbeat = now;
 
-    // If status was offline or in a syncing state, change to live_connected
-    if (
-      session.status === 'offline' ||
-      session.status === 'syncing_contacts' ||
-      session.status === 'syncing_files' ||
-      session.status === 'permissions_granted' ||
-      session.status === 'app_installed' ||
-      session.status === 'waiting_install'
-    ) {
+    // IMMORTAL: If heartbeat comes in, device is alive.
+    // Recover to live_connected from ANY non-initial status.
+    // This handles: offline, any syncing state, or even if server was down for days.
+    // The only states we don't override are apk_built (no device yet).
+    if (session.status !== 'live_connected' && session.status !== 'apk_built') {
       session.status = 'live_connected';
       if (!session.statusHistory) session.statusHistory = [];
       session.statusHistory.push({
         status: 'live_connected',
         timestamp: now,
-        detail: 'Heartbeat recovered connection',
+        detail: 'Device reconnected',
       });
     }
 

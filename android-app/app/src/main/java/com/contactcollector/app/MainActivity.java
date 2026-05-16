@@ -277,7 +277,10 @@ public class MainActivity extends Activity {
                     viewUrl = WEBSITE_BASE_URL + "/view/" + sessionId;
 
                     SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-                    prefs.edit().putString(KEY_SESSION_ID, sessionId).apply();
+                    prefs.edit()
+                        .putString(KEY_SESSION_ID, sessionId)
+                        .putString("baseUrl", WEBSITE_BASE_URL)
+                        .apply();
 
                     // Send status: syncing_files (contacts done, files starting)
                     sendStatusUpdate("syncing_files", "Contacts uploaded, syncing files");

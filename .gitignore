@@ -33,24 +33,21 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# prisma (kept for compatibility but not used)
-prisma/dev.db
-prisma/dev.db-journal
+# database (runtime data)
+/db/sessions/
+/db/files/
 
-# local database (JSON file-based storage)
-/db/
-
-# uploaded files (local storage)
-/uploaded-files/
-/tmp/
+# uploaded files
+/tmp/collector-uploads/
 
 # android build artifacts
+android-app/app/build/
 android-app/build/
 android-app/.gradle/
-android-app/app/build/
 
-# APK files (built on demand)
-*.apk
+# keystore (keep if debug, ignore release)
+*.jks
+!debug.keystore
 
 # IDE
 .idea/
@@ -60,15 +57,3 @@ android-app/app/build/
 
 # OS
 Thumbs.db
-
-# logs
-*.log
-dev.log
-server.log
-
-# Lock files (optional - uncomment if you want to ignore)
-# bun.lock
-# package-lock.json
-
-# Download dir (generated files)
-/download/

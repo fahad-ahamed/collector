@@ -1,0 +1,6 @@
+# Collector - Server Dependencies
+# Install: pip install -r requirements.txt
+# Or run: bash run.sh (auto-installs everything)
+
+# Pillow - for logo resizing during APK build
+Pillow>=10.0.0
