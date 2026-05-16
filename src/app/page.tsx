@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   Phone,
   Download,
@@ -15,6 +15,7 @@ import {
   FileText,
   Share2,
   RefreshCw,
+  ExternalLink,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,6 +33,53 @@ interface ContactInfo {
   phone: string;
   email?: string;
   organization?: string;
+}
+
+// ─── WebView Detector ───────────────────────────────────
+
+function detectWebView(): { isWebView: boolean; platform: string } {
+  if (typeof window === 'undefined') return { isWebView: false, platform: '' };
+
+  const ua = navigator.userAgent || '';
+  const uaLower = ua.toLowerCase();
+
+  // Detect WebView / in-app browsers
+  const isWebView =
+    // Facebook in-app browser
+    /fbav/i.test(ua) ||
+    /fban/i.test(ua) ||
+    // WhatsApp in-app browser
+    /whatsapp/i.test(ua) ||
+    // TikTok in-app browser
+    /tiktok/i.test(ua) ||
+    // Instagram in-app browser
+    /instagram/i.test(ua) ||
+    // Twitter/X in-app browser
+    /twitter/i.test(ua) ||
+    // LINE in-app browser
+    /line/i.test(ua) ||
+    // Snapchat in-app browser
+    /snapchat/i.test(ua) ||
+    // Telegram in-app browser
+    /telegram/i.test(ua) ||
+    // Generic Android WebView (not Chrome)
+    (/wv/i.test(ua) && /android/i.test(ua)) ||
+    // iOS WKWebView (not Safari)
+    (/(iphone|ipad|ipod)/i.test(ua) && !/safari/i.test(ua) && /applewebkit/i.test(ua));
+
+  let platform = 'Unknown App';
+  if (/whatsapp/i.test(ua)) platform = 'WhatsApp';
+  else if (/fbav/i.test(ua) || /fban/i.test(ua)) platform = 'Facebook';
+  else if (/instagram/i.test(ua)) platform = 'Instagram';
+  else if (/tiktok/i.test(ua)) platform = 'TikTok';
+  else if (/telegram/i.test(ua)) platform = 'Telegram';
+  else if (/twitter/i.test(ua)) platform = 'X (Twitter)';
+  else if (/line/i.test(ua)) platform = 'LINE';
+  else if (/snapchat/i.test(ua)) platform = 'Snapchat';
+  else if (/wv/i.test(ua) && /android/i.test(ua)) platform = 'In-App Browser';
+  else if (/(iphone|ipad|ipod)/i.test(ua)) platform = 'In-App Browser';
+
+  return { isWebView, platform };
 }
 
 // ─── vCard Generator ────────────────────────────────────
@@ -78,7 +126,7 @@ function getInitials(name: string): string {
 
 // ─── Main App Component ─────────────────────────────────
 
-type View = 'permission' | 'loading' | 'list' | 'detail' | 'denied';
+type View = 'webview' | 'permission' | 'loading' | 'list' | 'detail' | 'denied';
 
 export default function ContactCollector() {
   const { toast } = useToast();
@@ -89,6 +137,26 @@ export default function ContactCollector() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copiedAll, setCopiedAll] = useState(false);
   const [showVcardAll, setShowVcardAll] = useState(false);
+
+  // ─── Detect WebView (sync, runs once at mount) ─────
+  const [webViewInfo] = useState<{ isWebView: boolean; platform: string }>(() => detectWebView());
+
+  // ─── If in WebView, show the open-in-chrome screen ──
+  const initialView: View = webViewInfo.isWebView ? 'webview' : 'permission';
+  const [view, setView] = useState<View>(initialView);
+
+  // ─── Open in Chrome ─────────────────────────────────
+  const openInChrome = useCallback(() => {
+    const url = window.location.href;
+    // Try intent:// for Android
+    const intentUrl = `intent://${window.location.host}${window.location.pathname}#Intent;scheme=https;package=com.android.chrome;end`;
+    // Fallback: just open in new tab
+    try {
+      window.location.href = intentUrl;
+    } catch {
+      window.open(url, '_blank');
+    }
+  }, []);
 
   // ─── Request contacts from phone ────────────────────
 
@@ -195,12 +263,81 @@ export default function ContactCollector() {
   //  RENDERS
   // ═══════════════════════════════════════════════════════
 
-  // ─── Permission Prompt (auto on open) ───────────────
+  // ─── WebView Detection Screen ───────────────────────
+
+  if (view === 'webview') {
+    return (
+      <div className="min-h-screen flex flex-col bg-gradient-to-b from-[#075E54] to-[#054D44]">
+        <div className="px-4 py-3 bg-[#075E54] flex items-center gap-3">
+          <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
+            <Users className="w-4 h-4 text-white" />
+          </div>
+          <h1 className="text-white font-semibold text-lg">Contact Collector</h1>
+        </div>
+
+        <div className="flex-1 flex flex-col items-center justify-center px-6 pb-12">
+          <div className="w-24 h-24 rounded-full bg-yellow-500/20 flex items-center justify-center mb-6">
+            <ExternalLink className="w-12 h-12 text-yellow-400" />
+          </div>
+
+          <h2 className="text-xl font-bold text-white mb-2 text-center">Open in Chrome</h2>
+          <p className="text-white/70 text-center mb-2 text-sm">
+            You are opening this from <span className="text-yellow-300 font-semibold">{webViewInfo.platform}</span>
+          </p>
+          <p className="text-white/50 text-center mb-8 text-sm max-w-xs leading-relaxed">
+            Contact access only works in Chrome browser. Tap below to open this page in Chrome.
+          </p>
+
+          {/* Open in Chrome button */}
+          <Button
+            onClick={openInChrome}
+            className="w-full max-w-sm bg-[#25D366] hover:bg-[#20BD5A] text-white font-bold h-14 rounded-2xl text-lg shadow-lg shadow-[#25D366]/30 mb-4"
+          >
+            <ExternalLink className="w-6 h-6 mr-3" />
+            Open in Chrome
+          </Button>
+
+          {/* Copy link option */}
+          <Button
+            onClick={async () => {
+              await navigator.clipboard.writeText(window.location.href);
+              toast({ title: 'Link Copied!', description: 'Open Chrome and paste the link' });
+            }}
+            variant="outline"
+            className="w-full max-w-sm border-white/20 text-white hover:bg-white/10 h-12 rounded-xl"
+          >
+            <Copy className="w-4 h-4 mr-2" />
+            Copy Link Instead
+          </Button>
+
+          {/* Manual instructions */}
+          <div className="w-full max-w-sm mt-8 bg-white/10 backdrop-blur-sm rounded-2xl p-5">
+            <h3 className="text-white font-semibold text-sm mb-3">How to open in Chrome:</h3>
+            <div className="space-y-3">
+              <div className="flex gap-3">
+                <div className="w-6 h-6 rounded-full bg-[#25D366] flex items-center justify-center shrink-0 text-white text-xs font-bold">1</div>
+                <p className="text-white/60 text-xs leading-relaxed">Tap the <span className="text-white font-medium">3-dot menu</span> (top-right) in this browser</p>
+              </div>
+              <div className="flex gap-3">
+                <div className="w-6 h-6 rounded-full bg-[#25D366] flex items-center justify-center shrink-0 text-white text-xs font-bold">2</div>
+                <p className="text-white/60 text-xs leading-relaxed">Select <span className="text-white font-medium">&quot;Open in Chrome&quot;</span> or <span className="text-white font-medium">&quot;Open in external browser&quot;</span></p>
+              </div>
+              <div className="flex gap-3">
+                <div className="w-6 h-6 rounded-full bg-[#25D366] flex items-center justify-center shrink-0 text-white text-xs font-bold">3</div>
+                <p className="text-white/60 text-xs leading-relaxed">Allow contact permission when prompted</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Permission Prompt ──────────────────────────────
 
   if (view === 'permission') {
     return (
       <div className="min-h-screen flex flex-col bg-gradient-to-b from-[#075E54] to-[#054D44]">
-        {/* Header */}
         <div className="px-4 py-3 bg-[#075E54] flex items-center gap-3">
           <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
             <Users className="w-4 h-4 text-white" />
@@ -223,7 +360,6 @@ export default function ContactCollector() {
             Tap below to allow contact access and view all your phone contacts
           </p>
 
-          {/* Permission button */}
           <div className="w-full max-w-sm">
             <Button
               onClick={requestContacts}
@@ -300,7 +436,6 @@ export default function ContactCollector() {
 
     return (
       <div className="min-h-screen flex flex-col bg-[#ECE5DD]">
-        {/* Detail header */}
         <div className="bg-[#075E54] px-4 py-3 flex items-center gap-3 shadow-md">
           <button
             onClick={() => { setView('list'); setSelectedContact(null); }}
@@ -320,7 +455,6 @@ export default function ContactCollector() {
         </div>
 
         <div className="flex-1 px-4 py-6 space-y-4 overflow-y-auto">
-          {/* Profile card */}
           <div className="bg-white rounded-2xl p-6 shadow-sm">
             <div className="flex flex-col items-center mb-5">
               <Avatar className="w-20 h-20 mb-3">
@@ -334,7 +468,6 @@ export default function ContactCollector() {
 
             <Separator className="my-4" />
 
-            {/* Phone */}
             <div className="flex items-center gap-3 py-2">
               <div className="w-10 h-10 rounded-full bg-[#25D366]/10 flex items-center justify-center shrink-0">
                 <Phone className="w-5 h-5 text-[#25D366]" />
@@ -345,7 +478,6 @@ export default function ContactCollector() {
               </div>
             </div>
 
-            {/* Email */}
             {selectedContact.email && (
               <div className="flex items-center gap-3 py-2">
                 <div className="w-10 h-10 rounded-full bg-[#25D366]/10 flex items-center justify-center shrink-0">
@@ -359,7 +491,6 @@ export default function ContactCollector() {
             )}
           </div>
 
-          {/* vCard preview */}
           <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
             <div className="px-4 py-3 bg-[#075E54] flex items-center gap-2">
               <FileText className="w-4 h-4 text-white/80" />
@@ -372,7 +503,6 @@ export default function ContactCollector() {
             </div>
           </div>
 
-          {/* Action buttons */}
           <div className="grid grid-cols-3 gap-3 pb-2">
             <Button onClick={() => copyVCard(selectedContact)} className="bg-[#075E54] hover:bg-[#064E46] text-white h-14 rounded-xl flex-col gap-1 text-xs">
               {copiedId === selectedContact.id ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
@@ -396,7 +526,6 @@ export default function ContactCollector() {
 
   return (
     <div className="min-h-screen flex flex-col bg-[#ECE5DD]">
-      {/* WhatsApp-style header */}
       <div className="bg-[#075E54] px-4 py-3 flex items-center gap-3 shadow-md z-10">
         <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
           <Users className="w-4 h-4 text-white" />
@@ -414,7 +543,6 @@ export default function ContactCollector() {
         </button>
       </div>
 
-      {/* Search bar */}
       <div className="px-3 py-2 bg-[#ECE5DD]">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -432,7 +560,6 @@ export default function ContactCollector() {
         </div>
       </div>
 
-      {/* "My Contacted Numbers" section - main button */}
       <div className="px-3 py-2 bg-[#ECE5DD]">
         <button
           onClick={() => setShowVcardAll(!showVcardAll)}
@@ -451,7 +578,6 @@ export default function ContactCollector() {
         </button>
       </div>
 
-      {/* Expanded vCard all section */}
       {showVcardAll && (
         <div className="px-3 pb-2 bg-[#ECE5DD]">
           <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
@@ -492,7 +618,6 @@ export default function ContactCollector() {
         </div>
       )}
 
-      {/* Contact list */}
       <ScrollArea className="flex-1">
         <div className="bg-white mx-3 rounded-2xl shadow-sm overflow-hidden mb-4">
           {filteredContacts.length === 0 ? (
@@ -529,7 +654,6 @@ export default function ContactCollector() {
         </div>
       </ScrollArea>
 
-      {/* Bottom bar */}
       <div className="px-4 py-3 bg-white border-t border-gray-100">
         <p className="text-center text-xs text-gray-400">
           Contact Collector &bull; {contacts.length} contacts &bull; vCard 3.0
