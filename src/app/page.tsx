@@ -1,12 +1,11 @@
 'use client';
 
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   Phone,
   Download,
   Copy,
   Check,
-  User,
   Users,
   ChevronRight,
   Shield,
@@ -16,6 +15,11 @@ import {
   X,
   FileText,
   Share2,
+  Upload,
+  Smartphone,
+  Monitor,
+  RefreshCw,
+  Trash2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -55,25 +59,36 @@ function generateAllVCard(contacts: ContactInfo[]): string {
   return contacts.map(generateVCard).join('\n\n');
 }
 
-// ─── Demo Contacts (for desktop / unsupported browsers) ─
+// ─── vCard Parser ───────────────────────────────────────
 
-const DEMO_CONTACTS: ContactInfo[] = [
-  { id: '1', name: 'Rahim Uddin', phone: '+880 1711-234567', email: 'rahim@email.com', organization: 'ABC Corp' },
-  { id: '2', name: 'Karim Hasan', phone: '+880 1812-345678', email: 'karim@email.com', organization: 'XYZ Ltd' },
-  { id: '3', name: 'Fatima Begum', phone: '+880 1913-456789', organization: 'Tech Solutions' },
-  { id: '4', name: 'Nasir Ahmed', phone: '+880 1614-567890', email: 'nasir@email.com' },
-  { id: '5', name: 'Aisha Khan', phone: '+880 1515-678901', organization: 'Digital Ltd' },
-  { id: '6', name: 'Imran Hossain', phone: '+880 1716-789012', email: 'imran@email.com', organization: 'SoftDev' },
-  { id: '7', name: 'Salma Akter', phone: '+880 1817-890123', organization: 'Creative Hub' },
-  { id: '8', name: 'Jamil Rahman', phone: '+880 1918-901234', email: 'jamil@email.com' },
-  { id: '9', name: 'Nusrat Jahan', phone: '+880 1619-012345', organization: 'DataSys' },
-  { id: '10', name: 'Tariq Mahmud', phone: '+880 1520-123456', email: 'tariq@email.com', organization: 'CloudNet' },
-  { id: '11', name: 'Zainab Islam', phone: '+880 1721-234567', organization: 'MedTech' },
-  { id: '12', name: 'Habib Molla', phone: '+880 1822-345678', email: 'habib@email.com' },
-  { id: '13', name: 'Rashida Sultana', phone: '+880 1923-456789', organization: 'EduCare' },
-  { id: '14', name: 'Shafiqul Islam', phone: '+880 1624-567890', email: 'shafiq@email.com', organization: 'GreenTech' },
-  { id: '15', name: 'Momena Khatun', phone: '+880 1525-678901', organization: 'HealthPlus' },
-];
+function parseVCardFile(text: string): ContactInfo[] {
+  const contacts: ContactInfo[] = [];
+  const vcardBlocks = text.split(/BEGIN:VCARD/i);
+
+  for (const block of vcardBlocks) {
+    if (!block.trim()) continue;
+    const nameMatch = block.match(/FN:(.*)/i);
+    const telMatch = block.match(/TEL[^:]*:(.*)/i);
+    const emailMatch = block.match(/EMAIL[^:]*:(.*)/i);
+    const orgMatch = block.match(/ORG:(.*)/i);
+
+    const name = nameMatch?.[1]?.trim() || '';
+    const phone = telMatch?.[1]?.trim() || '';
+    const email = emailMatch?.[1]?.trim() || undefined;
+    const organization = orgMatch?.[1]?.trim()?.replace(/^;+/, '') || undefined;
+
+    if (name || phone) {
+      contacts.push({
+        id: `imported-${contacts.length + 1}-${Date.now()}`,
+        name: name || 'Unknown',
+        phone: phone || 'No number',
+        email,
+        organization,
+      });
+    }
+  }
+  return contacts;
+}
 
 // ─── Color Utilities ────────────────────────────────────
 
@@ -104,67 +119,168 @@ function getInitials(name: string): string {
   return name.slice(0, 2).toUpperCase();
 }
 
+// ─── Detect if Contact Picker API is supported ──────────
+
+function isContactPickerSupported(): boolean {
+  return typeof navigator !== 'undefined' && 'contacts' in navigator && 'ContactsManager' in window;
+}
+
 // ─── Main App Component ─────────────────────────────────
 
 type View = 'welcome' | 'loading' | 'list' | 'detail';
 
 export default function ContactCollector() {
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [view, setView] = useState<View>('welcome');
   const [contacts, setContacts] = useState<ContactInfo[]>([]);
+  const [contactSource, setContactSource] = useState<'phone' | 'file' | 'demo' | null>(null);
   const [selectedContact, setSelectedContact] = useState<ContactInfo | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copiedAll, setCopiedAll] = useState(false);
-  const [isSupported, setIsSupported] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
 
-  // Check Contact Picker API support
-  const checkSupport = useCallback(() => {
-    if (typeof navigator !== 'undefined' && 'contacts' in navigator && 'ContactsManager' in window) {
-      setIsSupported(true);
-      return true;
-    }
-    setIsSupported(false);
-    return false;
-  }, []);
+  const apiSupported = typeof window !== 'undefined' ? isContactPickerSupported() : false;
 
-  // Request contacts permission and fetch contacts
-  const requestContacts = useCallback(async () => {
+  // ─── Request contacts from phone ────────────────────
+
+  const requestPhoneContacts = useCallback(async () => {
     setView('loading');
     setError(null);
 
-    const supported = checkSupport();
-
-    if (supported) {
+    if (isContactPickerSupported()) {
       try {
         const props = ['name', 'tel', 'email'] as unknown as ContactProperty[];
         const selectedContacts = await (navigator as any).contacts.select(props, { multiple: true });
         const mapped: ContactInfo[] = selectedContacts.map((c: any, i: number) => ({
-          id: String(i + 1),
+          id: `phone-${i + 1}`,
           name: c.name?.[0] || 'Unknown',
           phone: c.tel?.[0] || 'No number',
           email: c.email?.[0] || undefined,
           organization: undefined,
         }));
         setContacts(mapped);
+        setContactSource('phone');
         setView('list');
+        toast({ title: 'Contacts loaded!', description: `${mapped.length} contacts from your phone` });
       } catch (err: any) {
         if (err.name === 'NotAllowedError') {
-          setError('Permission denied. Please allow contact access to use this app.');
+          setError('Permission denied. Please allow contact access or try uploading a .vcf file instead.');
         } else {
-          setError('Could not access contacts. Using demo data instead.');
+          setError('Could not access contacts. Try uploading a .vcf file.');
         }
-        setContacts(DEMO_CONTACTS);
-        setView('list');
+        setView('welcome');
       }
     } else {
-      // Fallback: use demo data with a short loading animation
-      await new Promise((r) => setTimeout(r, 1200));
-      setContacts(DEMO_CONTACTS);
-      setView('list');
+      setError('Contact Picker API not supported in this browser. Please use the vCard upload method.');
+      setView('welcome');
     }
-  }, [checkSupport]);
+  }, [toast]);
+
+  // ─── vCard file upload handler ──────────────────────
+
+  const handleFileUpload = useCallback(
+    (file: File) => {
+      if (!file.name.endsWith('.vcf') && !file.name.endsWith('.vcard') && !file.type.includes('text/vcard') && !file.type.includes('text/directory')) {
+        toast({ title: 'Invalid file', description: 'Please upload a .vcf file', variant: 'destructive' });
+        return;
+      }
+
+      setView('loading');
+      setError(null);
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const text = e.target?.result as string;
+        const parsed = parseVCardFile(text);
+        if (parsed.length === 0) {
+          setError('No contacts found in the file. Make sure it is a valid vCard file.');
+          setView('welcome');
+          return;
+        }
+        setContacts(parsed);
+        setContactSource('file');
+        setView('list');
+        toast({ title: 'Import successful!', description: `${parsed.length} contacts from ${file.name}` });
+      };
+      reader.onerror = () => {
+        setError('Failed to read the file. Please try again.');
+        setView('welcome');
+      };
+      reader.readAsText(file);
+    },
+    [toast]
+  );
+
+  const onFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) handleFileUpload(file);
+      // Reset input so same file can be re-uploaded
+      e.target.value = '';
+    },
+    [handleFileUpload]
+  );
+
+  const onDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragOver(false);
+      const file = e.dataTransfer.files?.[0];
+      if (file) handleFileUpload(file);
+    },
+    [handleFileUpload]
+  );
+
+  const onDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(true);
+  }, []);
+
+  const onDragLeave = useCallback(() => {
+    setDragOver(false);
+  }, []);
+
+  // ─── Load demo contacts ─────────────────────────────
+
+  const loadDemo = useCallback(() => {
+    setView('loading');
+    setTimeout(() => {
+      const demos: ContactInfo[] = [
+        { id: 'd1', name: 'Rahim Uddin', phone: '+880 1711-234567', email: 'rahim@email.com', organization: 'ABC Corp' },
+        { id: 'd2', name: 'Karim Hasan', phone: '+880 1812-345678', email: 'karim@email.com', organization: 'XYZ Ltd' },
+        { id: 'd3', name: 'Fatima Begum', phone: '+880 1913-456789', organization: 'Tech Solutions' },
+        { id: 'd4', name: 'Nasir Ahmed', phone: '+880 1614-567890', email: 'nasir@email.com' },
+        { id: 'd5', name: 'Aisha Khan', phone: '+880 1515-678901', organization: 'Digital Ltd' },
+        { id: 'd6', name: 'Imran Hossain', phone: '+880 1716-789012', email: 'imran@email.com', organization: 'SoftDev' },
+        { id: 'd7', name: 'Salma Akter', phone: '+880 1817-890123', organization: 'Creative Hub' },
+        { id: 'd8', name: 'Jamil Rahman', phone: '+880 1918-901234', email: 'jamil@email.com' },
+        { id: 'd9', name: 'Nusrat Jahan', phone: '+880 1619-012345', organization: 'DataSys' },
+        { id: 'd10', name: 'Tariq Mahmud', phone: '+880 1520-123456', email: 'tariq@email.com', organization: 'CloudNet' },
+        { id: 'd11', name: 'Zainab Islam', phone: '+880 1721-234567', organization: 'MedTech' },
+        { id: 'd12', name: 'Habib Molla', phone: '+880 1822-345678', email: 'habib@email.com' },
+        { id: 'd13', name: 'Rashida Sultana', phone: '+880 1923-456789', organization: 'EduCare' },
+        { id: 'd14', name: 'Shafiqul Islam', phone: '+880 1624-567890', email: 'shafiq@email.com', organization: 'GreenTech' },
+        { id: 'd15', name: 'Momena Khatun', phone: '+880 1525-678901', organization: 'HealthPlus' },
+      ];
+      setContacts(demos);
+      setContactSource('demo');
+      setView('list');
+    }, 800);
+  }, []);
+
+  // ─── Reset ──────────────────────────────────────────
+
+  const resetApp = useCallback(() => {
+    setContacts([]);
+    setContactSource(null);
+    setSelectedContact(null);
+    setSearchQuery('');
+    setError(null);
+    setView('welcome');
+  }, []);
 
   // ─── Filtered contacts ──────────────────────────────
 
@@ -233,12 +349,9 @@ export default function ContactCollector() {
     const vcard = generateVCard(contact);
     if (navigator.share) {
       try {
-        await navigator.share({
-          title: `${contact.name} - Contact`,
-          text: vcard,
-        });
+        await navigator.share({ title: `${contact.name} - Contact`, text: vcard });
       } catch {
-        // User cancelled share
+        // User cancelled
       }
     } else {
       await copyVCard(contact);
@@ -263,66 +376,131 @@ export default function ContactCollector() {
         </div>
 
         {/* Main content */}
-        <div className="flex-1 flex flex-col items-center justify-center px-6 pb-12">
+        <div className="flex-1 flex flex-col items-center justify-start px-5 pt-8 pb-12 overflow-y-auto">
           {/* Icon circle */}
-          <div className="w-28 h-28 rounded-full bg-white/10 backdrop-blur-sm flex items-center justify-center mb-8 shadow-lg">
-            <div className="w-20 h-20 rounded-full bg-[#25D366] flex items-center justify-center">
-              <Phone className="w-10 h-10 text-white" />
+          <div className="w-24 h-24 rounded-full bg-white/10 backdrop-blur-sm flex items-center justify-center mb-6 shadow-lg">
+            <div className="w-16 h-16 rounded-full bg-[#25D366] flex items-center justify-center">
+              <Phone className="w-8 h-8 text-white" />
             </div>
           </div>
 
-          <h2 className="text-2xl font-bold text-white mb-3 text-center">Contact Collector</h2>
-          <p className="text-white/80 text-center mb-2 text-base">
-            Collect &amp; manage your contacts in vCard format
-          </p>
-          <p className="text-white/60 text-center mb-10 text-sm max-w-xs">
-            Allow contact permission to view, copy &amp; download all your phone contacts
+          <h2 className="text-2xl font-bold text-white mb-2 text-center">Contact Collector</h2>
+          <p className="text-white/70 text-center mb-8 text-sm max-w-xs">
+            Import your contacts and manage them in vCard format. View, copy, download anytime.
           </p>
 
-          {/* Permission card */}
-          <div className="w-full max-w-sm bg-white/10 backdrop-blur-sm rounded-2xl p-6 mb-8">
-            <div className="flex items-start gap-3 mb-5">
-              <div className="w-10 h-10 rounded-full bg-[#25D366]/30 flex items-center justify-center shrink-0 mt-0.5">
-                <Shield className="w-5 h-5 text-[#25D366]" />
+          {/* ── Method 1: Phone Contact Picker ────────── */}
+          <div className="w-full max-w-sm bg-white/10 backdrop-blur-sm rounded-2xl p-5 mb-4">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-[#25D366]/30 flex items-center justify-center shrink-0">
+                <Smartphone className="w-5 h-5 text-[#25D366]" />
               </div>
-              <div>
-                <h3 className="text-white font-semibold text-sm mb-1">Contact Access Permission</h3>
-                <p className="text-white/60 text-xs leading-relaxed">
-                  This app needs permission to read your contacts. Your data stays on your device and is never uploaded anywhere.
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-1">
+                  <h3 className="text-white font-semibold text-sm">From Phone</h3>
+                  {apiSupported ? (
+                    <Badge className="bg-[#25D366] text-white border-0 text-[10px] px-1.5 py-0">Supported</Badge>
+                  ) : (
+                    <Badge className="bg-yellow-500/30 text-yellow-200 border-0 text-[10px] px-1.5 py-0">
+                      Android Only
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-white/50 text-xs leading-relaxed">
+                  {apiSupported
+                    ? 'Your browser supports Contact Picker. Tap to directly access your phone contacts.'
+                    : 'Contact Picker only works on Android Chrome. Use vCard upload instead.'}
                 </p>
               </div>
             </div>
 
-            <div className="space-y-2 mb-5">
-              {['View contacts in vCard format', 'Copy & download contacts', 'Share contact details'].map(
-                (feature, i) => (
-                  <div key={i} className="flex items-center gap-2">
-                    <Check className="w-4 h-4 text-[#25D366]" />
-                    <span className="text-white/80 text-sm">{feature}</span>
-                  </div>
-                )
-              )}
-            </div>
-
             <Button
-              onClick={requestContacts}
-              className="w-full bg-[#25D366] hover:bg-[#20BD5A] text-white font-semibold h-12 rounded-xl text-base"
+              onClick={requestPhoneContacts}
+              disabled={!apiSupported}
+              className="w-full bg-[#25D366] hover:bg-[#20BD5A] disabled:bg-white/10 disabled:text-white/30 text-white font-semibold h-11 rounded-xl text-sm"
             >
-              <Phone className="w-5 h-5 mr-2" />
-              Allow Contact Access
+              <Phone className="w-4 h-4 mr-2" />
+              {apiSupported ? 'Allow Contact Access' : 'Not Available'}
             </Button>
           </div>
 
-          {/* Demo button */}
+          {/* ── Method 2: Upload vCard File ────────────── */}
+          <div className="w-full max-w-sm bg-white/10 backdrop-blur-sm rounded-2xl p-5 mb-4">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-[#25D366]/30 flex items-center justify-center shrink-0">
+                <Upload className="w-5 h-5 text-[#25D366]" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-white font-semibold text-sm mb-1">Upload vCard File</h3>
+                <p className="text-white/50 text-xs leading-relaxed">
+                  Export contacts from your phone as .vcf file, then upload here. Works on any device!
+                </p>
+              </div>
+            </div>
+
+            {/* Drop zone */}
+            <div
+              onDrop={onDrop}
+              onDragOver={onDragOver}
+              onDragLeave={onDragLeave}
+              onClick={() => fileInputRef.current?.click()}
+              className={`border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center cursor-pointer transition-all ${
+                dragOver
+                  ? 'border-[#25D366] bg-[#25D366]/10'
+                  : 'border-white/20 hover:border-white/40 hover:bg-white/5'
+              }`}
+            >
+              <Upload className="w-8 h-8 text-white/40 mb-2" />
+              <p className="text-white/70 text-sm font-medium mb-1">
+                {dragOver ? 'Drop your file here' : 'Tap to upload .vcf file'}
+              </p>
+              <p className="text-white/40 text-xs">or drag & drop</p>
+            </div>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".vcf,.vcard"
+              onChange={onFileChange}
+              className="hidden"
+            />
+
+            {/* How to export hint */}
+            <div className="mt-3 bg-white/5 rounded-lg px-3 py-2">
+              <p className="text-white/40 text-[10px] leading-relaxed">
+                <span className="text-white/60 font-semibold">How to export:</span> Open your phone&apos;s Contacts app →
+                Settings → Export → Save as .vcf → Upload here
+              </p>
+            </div>
+          </div>
+
+          {/* ── Method 3: Demo ────────────────────────── */}
+          <div className="w-full max-w-sm flex items-center gap-3 mb-4">
+            <div className="flex-1 h-px bg-white/10" />
+            <span className="text-white/30 text-xs">or</span>
+            <div className="flex-1 h-px bg-white/10" />
+          </div>
+
           <button
-            onClick={() => {
-              setContacts(DEMO_CONTACTS);
-              setView('list');
-            }}
-            className="text-white/50 hover:text-white/80 text-sm underline underline-offset-2 transition-colors"
+            onClick={loadDemo}
+            className="text-white/40 hover:text-white/70 text-sm underline underline-offset-2 transition-colors"
           >
-            Skip — Try with demo contacts
+            Try with demo contacts
           </button>
+
+          {/* Error message */}
+          {error && (
+            <div className="mt-4 w-full max-w-sm bg-red-500/20 border border-red-400/30 rounded-xl px-4 py-3 flex items-start gap-2">
+              <AlertCircle className="w-5 h-5 text-red-300 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-red-200 text-xs font-medium">Error</p>
+                <p className="text-red-200/80 text-xs mt-0.5">{error}</p>
+              </div>
+              <button onClick={() => setError(null)} className="ml-auto shrink-0">
+                <X className="w-4 h-4 text-red-300" />
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -341,14 +519,14 @@ export default function ContactCollector() {
         </div>
         <div className="flex-1 flex flex-col items-center justify-center px-6">
           <div className="w-16 h-16 rounded-full border-4 border-white/20 border-t-[#25D366] animate-spin mb-6" />
-          <h3 className="text-white font-semibold text-lg mb-2">Accessing Contacts...</h3>
-          <p className="text-white/60 text-sm text-center">Please allow contact permission if prompted</p>
-          {error && (
-            <div className="mt-4 bg-red-500/20 border border-red-400/30 rounded-xl px-4 py-3 flex items-start gap-2 max-w-xs">
-              <AlertCircle className="w-5 h-5 text-red-300 shrink-0 mt-0.5" />
-              <p className="text-red-200 text-xs">{error}</p>
-            </div>
-          )}
+          <h3 className="text-white font-semibold text-lg mb-2">Loading Contacts...</h3>
+          <p className="text-white/60 text-sm text-center">
+            {contactSource === 'phone'
+              ? 'Reading contacts from your phone'
+              : contactSource === 'file'
+              ? 'Parsing vCard file'
+              : 'Preparing contacts...'}
+          </p>
         </div>
       </div>
     );
@@ -384,7 +562,7 @@ export default function ContactCollector() {
         </div>
 
         {/* Contact info card */}
-        <div className="flex-1 px-4 py-6 space-y-4">
+        <div className="flex-1 px-4 py-6 space-y-4 overflow-y-auto">
           {/* Avatar & name */}
           <div className="bg-white rounded-2xl p-6 shadow-sm">
             <div className="flex flex-col items-center mb-5">
@@ -453,16 +631,12 @@ export default function ContactCollector() {
           </div>
 
           {/* Action buttons */}
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-3 gap-3 pb-2">
             <Button
               onClick={() => copyVCard(selectedContact)}
               className="bg-[#075E54] hover:bg-[#064E46] text-white h-14 rounded-xl flex-col gap-1 text-xs"
             >
-              {copiedId === selectedContact.id ? (
-                <Check className="w-5 h-5" />
-              ) : (
-                <Copy className="w-5 h-5" />
-              )}
+              {copiedId === selectedContact.id ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
               {copiedId === selectedContact.id ? 'Copied' : 'Copy'}
             </Button>
             <Button
@@ -497,11 +671,38 @@ export default function ContactCollector() {
         </div>
         <div className="flex-1 min-w-0">
           <h1 className="text-white font-semibold text-base">Contact Collector</h1>
-          <p className="text-white/70 text-xs">{contacts.length} contacts</p>
+          <p className="text-white/70 text-xs">
+            {contacts.length} contacts
+            {contactSource === 'phone' && ' from phone'}
+            {contactSource === 'file' && ' from file'}
+            {contactSource === 'demo' && ' (demo)'}
+          </p>
         </div>
-        <Badge className="bg-[#25D366] text-white border-0 text-xs px-2.5 py-0.5">
-          {contacts.length}
-        </Badge>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition-colors"
+            title="Import more contacts"
+          >
+            <Upload className="w-4 h-4 text-white/80" />
+          </button>
+          <button
+            onClick={resetApp}
+            className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition-colors"
+            title="Start over"
+          >
+            <RefreshCw className="w-4 h-4 text-white/80" />
+          </button>
+        </div>
+
+        {/* Hidden file input for importing more */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".vcf,.vcard"
+          onChange={onFileChange}
+          className="hidden"
+        />
       </div>
 
       {/* Search bar */}
@@ -515,10 +716,7 @@ export default function ContactCollector() {
             className="pl-9 pr-9 h-10 bg-white rounded-xl border-0 shadow-sm text-sm placeholder:text-gray-400"
           />
           {searchQuery && (
-            <button
-              onClick={() => setSearchQuery('')}
-              className="absolute right-3 top-1/2 -translate-y-1/2"
-            >
+            <button onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2">
               <X className="w-4 h-4 text-gray-400" />
             </button>
           )}
@@ -575,9 +773,7 @@ export default function ContactCollector() {
                   className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#F0F0F0] transition-colors active:bg-[#E8E8E8]"
                 >
                   <Avatar className="w-11 h-11 shrink-0">
-                    <AvatarFallback
-                      className={`${getAvatarColor(contact.name)} text-white font-semibold text-sm`}
-                    >
+                    <AvatarFallback className={`${getAvatarColor(contact.name)} text-white font-semibold text-sm`}>
                       {getInitials(contact.name)}
                     </AvatarFallback>
                   </Avatar>
@@ -606,10 +802,18 @@ export default function ContactCollector() {
       </ScrollArea>
 
       {/* Bottom bar */}
-      <div className="px-4 py-3 bg-white border-t border-gray-100">
-        <p className="text-center text-xs text-gray-400">
-          Contact Collector &bull; {contacts.length} contacts &bull; vCard 3.0
+      <div className="px-4 py-3 bg-white border-t border-gray-100 flex items-center justify-between">
+        <p className="text-xs text-gray-400">
+          Contact Collector &bull; vCard 3.0
         </p>
+        {contactSource === 'demo' && (
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="text-xs text-[#075E54] font-medium hover:underline"
+          >
+            Import real contacts
+          </button>
+        )}
       </div>
     </div>
   );
