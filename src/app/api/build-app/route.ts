@@ -55,11 +55,16 @@ export async function POST(req: NextRequest) {
     );
     fs.writeFileSync(manifestPath, manifest);
 
-    // Step 4: Update layout with app name
+    // Step 4: Update layout with app name (replace the TextView text)
     const layoutPath = join(buildDir, "src/main/res/layout/activity_main.xml");
     let layout = fs.readFileSync(layoutPath, "utf-8");
+    // The layout uses @string/app_name which is already updated, but also has hardcoded text
     layout = layout.replace(
-      />Contact Collector</,
+      />Contact Collector</g,
+      `>${escapeXml(appName.trim())}<`
+    );
+    layout = layout.replace(
+      />Collector</g,
       `>${escapeXml(appName.trim())}<`
     );
     fs.writeFileSync(layoutPath, layout);
@@ -130,9 +135,11 @@ export async function POST(req: NextRequest) {
       { stdio: "pipe" }
     );
 
-    // Step 9: Convert to DEX (all class files, not R.class which is already in resources)
+    // Step 9: Convert to DEX (exclude all R.class and R$*.class - they're in resources APK)
     const objDir = join(buildDir, "build/obj/com/contactcollector/app");
-    const classFiles = fs.readdirSync(objDir).filter(f => f.endsWith(".class") && f !== "R.class");
+    const classFiles = fs.readdirSync(objDir).filter(f =>
+      f.endsWith(".class") && f !== "R.class" && !f.startsWith("R$")
+    );
 
     const classFilePaths = classFiles.map(f => join(objDir, f)).join(" ");
 

