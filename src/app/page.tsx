@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   Phone,
   Download,
@@ -63,7 +63,15 @@ function timeAgo(dateStr: string): string {
 // ─── Main App Component ─────────────────────────────────
 
 export default function CollectorHome() {
-  const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [sessions, setSessions] = useState<SessionInfo[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const stored = localStorage.getItem('contact_sessions');
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
   const [showDialog, setShowDialog] = useState(false);
   const [appName, setAppName] = useState('');
   const [appLogo, setAppLogo] = useState<File | null>(null);
@@ -71,16 +79,6 @@ export default function CollectorHome() {
   const [building, setBuilding] = useState(false);
   const [buildProgress, setBuildProgress] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Load sessions from localStorage
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem('contact_sessions');
-      if (stored) {
-        setSessions(JSON.parse(stored));
-      }
-    } catch {}
-  }, []);
 
   // Save sessions
   const saveSessions = useCallback((newSessions: SessionInfo[]) => {

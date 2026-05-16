@@ -33,11 +33,11 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# prisma
+# prisma (kept for compatibility but not used)
 prisma/dev.db
 prisma/dev.db-journal
 
-# local database
+# local database (JSON file-based storage)
 /db/
 
 # uploaded files (local storage)
@@ -66,17 +66,9 @@ Thumbs.db
 dev.log
 server.log
 
-# examples (not part of main app)
-/examples/
-
-# Caddy (local dev only)
-Caddyfile
-
-# Worklog (internal)
-worklog.md
-
-# Fresh build temp
-/fresh-build/
+# Lock files (optional - uncomment if you want to ignore)
+# bun.lock
+# package-lock.json
 
 # Download dir (generated files)
 /download/

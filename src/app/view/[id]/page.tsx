@@ -134,7 +134,7 @@ function formatFileSize(bytes: number): string {
 
 function getFileIcon(type: string) {
   switch (type) {
-    case 'image': return <Image className="w-5 h-5 text-purple-500" />;
+    case 'image': return <Image className="w-5 h-5 text-purple-500" aria-label="Image file" />;
     case 'video': return <Video className="w-5 h-5 text-red-500" />;
     case 'audio': return <Music className="w-5 h-5 text-orange-500" />;
     case 'pdf': return <FileText className="w-5 h-5 text-red-600" />;
@@ -185,6 +185,7 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
   const [appName, setAppName] = useState('Collector');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [fetchKey, setFetchKey] = useState(0);
   const [activeTab, setActiveTab] = useState<Tab>('contacts');
   const [selectedContact, setSelectedContact] = useState<ContactInfo | null>(null);
   const [view, setView] = useState<'list' | 'detail'>('list');
@@ -217,9 +218,11 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
     } catch {}
   }, []);
 
+  // Data fetching - triggered by sessionId and fetchKey (for manual refresh)
   const fetchData = useCallback(async () => {
     if (!sessionId) return;
     setLoading(true);
+    setError('');
     try {
       const res = await fetch(`/api/contacts/view/${sessionId}`);
       if (!res.ok) {
@@ -239,9 +242,38 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
     setLoading(false);
   }, [sessionId, saveToHistory]);
 
+  // Fetch on sessionId change or manual refresh (fetchKey change)
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    if (!sessionId) return;
+    let cancelled = false;
+
+    fetch(`/api/contacts/view/${sessionId}`)
+      .then(res => {
+        if (!res.ok) throw new Error('not found');
+        return res.json();
+      })
+      .then((data: SessionData) => {
+        if (cancelled) return;
+        setContacts(data.contacts);
+        setFiles(data.files || []);
+        setUploadedFiles(data.uploadedFiles || []);
+        setAppName(data.appName || 'Collector');
+        saveToHistory(data);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setError('Session not found or expired');
+        setLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [sessionId, fetchKey, saveToHistory]);
+
+  // Manual refresh handler
+  const handleRefresh = useCallback(() => {
+    setFetchKey(k => k + 1);
+  }, []);
 
   const filteredContacts = useMemo(() => {
     if (!searchQuery.trim()) return contacts;
@@ -513,7 +545,7 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
           <h1 className="text-white font-semibold text-base">{appName}</h1>
           <p className="text-white/70 text-xs">{contacts.length} contacts &bull; {uploadedFiles.length} files</p>
         </div>
-        <button onClick={() => fetchData()} className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center" title="Refresh">
+        <button onClick={() => handleRefresh()} className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center" title="Refresh">
           <RefreshCw className="w-4 h-4 text-white/70" />
         </button>
       </div>
@@ -738,7 +770,7 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
                   Files are being uploaded in the background by the app. Refresh to check for updates.
                 </p>
                 <Button
-                  onClick={() => fetchData()}
+                  onClick={() => handleRefresh()}
                   variant="outline"
                   size="sm"
                   className="mt-3 border-[#075E54]/30 text-[#075E54] rounded-xl text-xs"
@@ -805,7 +837,7 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
               </h4>
               <div className="grid grid-cols-2 gap-3 mb-3">
                 <div className="bg-purple-50 rounded-xl p-3 text-center">
-                  <Image className="w-5 h-5 text-purple-500 mx-auto mb-1" />
+                  <Image className="w-5 h-5 text-purple-500 mx-auto mb-1" aria-label="Images" />
                   <p className="text-xs font-bold text-gray-900">{fileTypeCounts.image || 0}</p>
                   <p className="text-[10px] text-gray-500">Images</p>
                 </div>
@@ -867,7 +899,7 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
             <div className="flex items-center justify-between mb-2 px-1">
               <h4 className="text-sm font-bold text-gray-700">All Synced Files</h4>
               <Button
-                onClick={() => fetchData()}
+                onClick={() => handleRefresh()}
                 variant="ghost"
                 size="sm"
                 className="text-[#075E54] text-xs h-7 px-2"

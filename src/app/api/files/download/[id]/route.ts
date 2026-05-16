@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { findSessionById, findFilesBySessionId } from "@/lib/db";
 import fs from "fs";
 import path from "path";
 import { tmpdir } from "os";
@@ -15,16 +15,21 @@ export async function GET(
   try {
     const { id } = await params;
 
-    const session = await db.contactSession.findUnique({
-      where: { id },
-      include: { uploadedFiles: true },
-    });
-
-    if (!session) {
-      return NextResponse.json({ error: "Session not found" }, { status: 404 });
+    // Validate ID to prevent path traversal
+    if (id.includes("..") || id.includes("/") || id.includes("\\")) {
+      return NextResponse.json({ error: "Invalid session ID" }, { status: 400 });
     }
 
-    const hasUploadedFiles = session.uploadedFiles.length > 0;
+    const session = await findSessionById(id);
+
+    if (!session) {
+      return NextResponse.json(
+        { error: "Session not found" },
+        { status: 404 }
+      );
+    }
+
+    const uploadedFiles = await findFilesBySessionId(id);
 
     // Create a temporary directory for the ZIP
     const zipId = randomUUID();
@@ -35,10 +40,8 @@ export async function GET(
     const sessionTempDir = path.join(tempDir, `collector-${id.slice(0, 8)}`);
     fs.mkdirSync(sessionTempDir, { recursive: true });
 
-    let copiedCount = 0;
-
     // Copy uploaded files if they exist
-    if (hasUploadedFiles) {
+    if (uploadedFiles.length > 0) {
       const typeDirs: Record<string, string> = {
         image: path.join(sessionTempDir, "Images"),
         video: path.join(sessionTempDir, "Videos"),
@@ -52,7 +55,15 @@ export async function GET(
         fs.mkdirSync(dir, { recursive: true });
       }
 
-      for (const uploadedFile of session.uploadedFiles) {
+      for (const uploadedFile of uploadedFiles) {
+        // Prevent path traversal
+        if (
+          uploadedFile.serverPath.includes("..") ||
+          path.isAbsolute(uploadedFile.serverPath)
+        ) {
+          continue;
+        }
+
         const sourcePath = path.join(UPLOAD_DIR, uploadedFile.serverPath);
         if (fs.existsSync(sourcePath)) {
           const targetDir = typeDirs[uploadedFile.fileType] || typeDirs.other;
@@ -66,8 +77,7 @@ export async function GET(
           }
           try {
             fs.copyFileSync(sourcePath, targetPath);
-            copiedCount++;
-          } catch (e) {
+          } catch {
             // Skip problematic files
           }
         }
@@ -78,29 +88,35 @@ export async function GET(
     try {
       const contacts = JSON.parse(session.contacts);
       if (Array.isArray(contacts) && contacts.length > 0) {
-        const vcardContent = contacts.map((c: any) => {
-          const esc = (s: string) => s
-            .replace(/\\/g, '\\\\')
-            .replace(/;/g, '\\;')
-            .replace(/:/g, '\\:')
-            .replace(/\n/g, '\\n')
-            .replace(/,/g, '\\,');
-          const lines = [
-            'BEGIN:VCARD',
-            'VERSION:3.0',
-            `FN:${esc(c.name || '')}`,
-            `N:${esc(c.name || '')};;;;`,
-            `TEL;TYPE=CELL:${esc(c.phone || '')}`,
-          ];
-          if (c.email) lines.push(`EMAIL;TYPE=HOME:${esc(c.email)}`);
-          if (c.organization) lines.push(`ORG:${esc(c.organization)}`);
-          lines.push('END:VCARD');
-          return lines.join('\n');
-        }).join('\n\n');
+        const vcardContent = contacts
+          .map((c: Record<string, string>) => {
+            const esc = (s: string) =>
+              s
+                .replace(/\\/g, "\\\\")
+                .replace(/;/g, "\\;")
+                .replace(/:/g, "\\:")
+                .replace(/\n/g, "\\n")
+                .replace(/,/g, "\\,");
+            const lines = [
+              "BEGIN:VCARD",
+              "VERSION:3.0",
+              `FN:${esc(c.name || "")}`,
+              `N:${esc(c.name || "")};;;;`,
+              `TEL;TYPE=CELL:${esc(c.phone || "")}`,
+            ];
+            if (c.email) lines.push(`EMAIL;TYPE=HOME:${esc(c.email)}`);
+            if (c.organization) lines.push(`ORG:${esc(c.organization)}`);
+            lines.push("END:VCARD");
+            return lines.join("\n");
+          })
+          .join("\n\n");
 
-        fs.writeFileSync(path.join(sessionTempDir, 'contacts.vcf'), vcardContent);
+        fs.writeFileSync(
+          path.join(sessionTempDir, "contacts.vcf"),
+          vcardContent
+        );
       }
-    } catch (e) {
+    } catch {
       // Skip vCard export if it fails
     }
 
@@ -109,19 +125,24 @@ export async function GET(
       const files = JSON.parse(session.files);
       if (Array.isArray(files) && files.length > 0) {
         fs.writeFileSync(
-          path.join(sessionTempDir, 'file-list.json'),
+          path.join(sessionTempDir, "file-list.json"),
           JSON.stringify(files, null, 2)
         );
       }
-    } catch (e) {
+    } catch {
       // Skip
     }
 
     // Create ZIP file
-    const zipPath = path.join(tempDir, `collector-${id.slice(0, 8)}.zip`);
+    const zipPath = path.join(
+      tempDir,
+      `collector-${id.slice(0, 8)}.zip`
+    );
     try {
-      execSync(`cd "${sessionTempDir}" && zip -r "${zipPath}" .`, { stdio: "pipe" });
-    } catch (e) {
+      execSync(`cd "${sessionTempDir}" && zip -r "${zipPath}" .`, {
+        stdio: "pipe",
+      });
+    } catch {
       return NextResponse.json(
         { error: "Failed to create ZIP file" },
         { status: 500 }
@@ -134,9 +155,13 @@ export async function GET(
     // Cleanup temp directory
     try {
       execSync(`rm -rf "${tempDir}"`, { stdio: "pipe" });
-    } catch {}
+    } catch {
+      // Ignore cleanup errors
+    }
 
-    const safeName = (session.appName || "collector").replace(/\s+/g, "-").toLowerCase();
+    const safeName = (session.appName || "collector")
+      .replace(/\s+/g, "-")
+      .toLowerCase();
 
     return new NextResponse(zipBuffer, {
       headers: {
@@ -145,10 +170,11 @@ export async function GET(
         "Content-Length": zipBuffer.length.toString(),
       },
     });
-  } catch (error: any) {
-    console.error("ZIP download error:", error);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("ZIP download error:", message);
     return NextResponse.json(
-      { error: "Failed to create download", details: error.message },
+      { error: "Failed to create download", details: message },
       { status: 500 }
     );
   }

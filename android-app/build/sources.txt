@@ -1,2 +1,0 @@
-build/gen/com/contactcollector/app/R.java
-app/src/main/java/com/contactcollector/app/MainActivity.java

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { findSessionById, createUploadedFile } from "@/lib/db";
 import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
     const formData = await req.formData();
     const sessionId = formData.get("sessionId") as string;
     const filePath = formData.get("filePath") as string;
-    const fileType = formData.get("fileType") as string || "other";
+    const fileType = (formData.get("fileType") as string) || "other";
     const file = formData.get("file") as File | null;
 
     if (!sessionId || !file) {
@@ -19,6 +19,11 @@ export async function POST(req: NextRequest) {
         { error: "sessionId and file are required" },
         { status: 400 }
       );
+    }
+
+    // Validate sessionId to prevent path traversal
+    if (sessionId.includes("..") || sessionId.includes("/") || sessionId.includes("\\")) {
+      return NextResponse.json({ error: "Invalid session ID" }, { status: 400 });
     }
 
     // Validate file size (max 100MB)
@@ -31,9 +36,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Verify session exists
-    const session = await db.contactSession.findUnique({
-      where: { id: sessionId },
-    });
+    const session = await findSessionById(sessionId);
     if (!session) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
@@ -55,15 +58,13 @@ export async function POST(req: NextRequest) {
     fs.writeFileSync(fullPath, buffer);
 
     // Save file metadata to database
-    const uploadedFile = await db.uploadedFile.create({
-      data: {
-        sessionId,
-        filePath: filePath || file.name,
-        fileName: file.name,
-        fileSize: buffer.length,
-        fileType,
-        serverPath,
-      },
+    const uploadedFile = await createUploadedFile({
+      sessionId,
+      filePath: filePath || file.name,
+      fileName: file.name,
+      fileSize: buffer.length,
+      fileType,
+      serverPath,
     });
 
     return NextResponse.json({
@@ -73,10 +74,11 @@ export async function POST(req: NextRequest) {
       fileType: uploadedFile.fileType,
       serverPath: uploadedFile.serverPath,
     });
-  } catch (error: any) {
-    console.error("File upload error:", error);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("File upload error:", message);
     return NextResponse.json(
-      { error: "Failed to upload file", details: error.message },
+      { error: "Failed to upload file", details: message },
       { status: 500 }
     );
   }

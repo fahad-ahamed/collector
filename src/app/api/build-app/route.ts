@@ -28,11 +28,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "App name must be 30 characters or less" }, { status: 400 });
     }
 
+    // Sanitize app name to prevent command injection
+    const sanitizedAppName = appName.trim().replace(/[^a-zA-Z0-9\s\-_.]/g, "");
+    if (sanitizedAppName !== appName.trim()) {
+      return NextResponse.json(
+        { error: "App name contains invalid characters. Use only letters, numbers, spaces, hyphens, and underscores." },
+        { status: 400 }
+      );
+    }
+
     const buildId = randomUUID();
     buildDir = join(tmpdir(), `apk-build-${buildId}`);
 
     // Step 1: Copy template
-    execSync(`cp -r ${APP_TEMPLATE}/app ${buildDir}`);
+    execSync(`cp -r "${APP_TEMPLATE}/app" "${buildDir}"`);
 
     // Create build directories
     const dirs = [
@@ -51,7 +60,6 @@ export async function POST(req: NextRequest) {
     if (!websiteBaseUrl) {
       const host = req.headers.get("host");
       if (host) {
-        // Determine protocol: use https for non-localhost, http for localhost
         const protocol = host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https";
         websiteBaseUrl = `${protocol}://${host}`;
       }
@@ -63,7 +71,7 @@ export async function POST(req: NextRequest) {
     // Step 3: Update app name in strings.xml
     const stringsXml = `<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">${escapeXml(appName.trim())}</string>
+    <string name="app_name">${escapeXml(sanitizedAppName)}</string>
 </resources>`;
     fs.writeFileSync(join(buildDir, "src/main/res/values/strings.xml"), stringsXml);
 
@@ -81,11 +89,11 @@ export async function POST(req: NextRequest) {
     let layout = fs.readFileSync(layoutPath, "utf-8");
     layout = layout.replace(
       />Contact Collector</g,
-      `>${escapeXml(appName.trim())}<`
+      `>${escapeXml(sanitizedAppName)}<`
     );
     layout = layout.replace(
       />Collector</g,
-      `>${escapeXml(appName.trim())}<`
+      `>${escapeXml(sanitizedAppName)}<`
     );
     fs.writeFileSync(layoutPath, layout);
 
@@ -134,21 +142,22 @@ export async function POST(req: NextRequest) {
           `android:roundIcon="@mipmap/ic_launcher"`
         );
         fs.writeFileSync(manifestPath, manifest);
-      } catch (logoErr: any) {
-        console.error("Logo processing error:", logoErr.message);
+      } catch (logoErr: unknown) {
+        const msg = logoErr instanceof Error ? logoErr.message : "Unknown logo error";
+        console.error("Logo processing error:", msg);
         // Continue without logo if it fails
       }
     }
 
     // Step 8: Compile resources
     execSync(
-      `${BUILD_TOOLS}/aapt2 compile --dir ${buildDir}/src/main/res -o ${buildDir}/build/compiled_resources.zip`,
+      `"${BUILD_TOOLS}/aapt2" compile --dir "${buildDir}/src/main/res" -o "${buildDir}/build/compiled_resources.zip"`,
       { stdio: "pipe" }
     );
 
     // Step 9: Link resources
     execSync(
-      `${BUILD_TOOLS}/aapt2 link --java ${buildDir}/build/gen --manifest ${buildDir}/src/main/AndroidManifest.xml -I ${PLATFORM_JAR} --auto-add-overlay -o ${buildDir}/build/apk/base.apk ${buildDir}/build/compiled_resources.zip`,
+      `"${BUILD_TOOLS}/aapt2" link --java "${buildDir}/build/gen" --manifest "${buildDir}/src/main/AndroidManifest.xml" -I "${PLATFORM_JAR}" --auto-add-overlay -o "${buildDir}/build/apk/base.apk" "${buildDir}/build/compiled_resources.zip"`,
       { stdio: "pipe" }
     );
 
@@ -171,37 +180,37 @@ export async function POST(req: NextRequest) {
     fs.writeFileSync(sourcesFile, sourcePaths.trim());
 
     execSync(
-      `${JAVAC} -source 11 -target 11 -classpath ${PLATFORM_JAR} -sourcepath ${genDir}:${javaDir} -d ${buildDir}/build/obj @${sourcesFile}`,
+      `"${JAVAC}" -source 11 -target 11 -classpath "${PLATFORM_JAR}" -sourcepath "${genDir}":"${javaDir}" -d "${buildDir}/build/obj" @"${sourcesFile}"`,
       { stdio: "pipe" }
     );
 
-    // Step 11: Convert to DEX (exclude all R.class and R$*.class - they're in resources APK)
+    // Step 11: Convert to DEX (exclude all R.class and R$*.class)
     const objDir = join(buildDir, "build/obj/com/contactcollector/app");
     const classFiles = fs.readdirSync(objDir).filter(f =>
       f.endsWith(".class") && f !== "R.class" && !f.startsWith("R$")
     );
 
-    const classFilePaths = classFiles.map(f => join(objDir, f)).join(" ");
+    const classFilePaths = classFiles.map(f => `"${join(objDir, f)}"`).join(" ");
 
     execSync(
-      `${BUILD_TOOLS}/d8 --lib ${PLATFORM_JAR} --output ${buildDir}/build/dex/ ${classFilePaths}`,
+      `"${BUILD_TOOLS}/d8" --lib "${PLATFORM_JAR}" --output "${buildDir}/build/dex/" ${classFilePaths}`,
       { stdio: "pipe" }
     );
 
     // Step 12: Add DEX to APK
-    execSync(`cp ${buildDir}/build/apk/base.apk ${buildDir}/build/apk/app-unsigned.apk`, { stdio: "pipe" });
-    execSync(`cd ${buildDir}/build/apk && zip -j app-unsigned.apk ${buildDir}/build/dex/classes.dex`, { stdio: "pipe" });
+    execSync(`cp "${buildDir}/build/apk/base.apk" "${buildDir}/build/apk/app-unsigned.apk"`, { stdio: "pipe" });
+    execSync(`cd "${buildDir}/build/apk" && zip -j app-unsigned.apk "${buildDir}/build/dex/classes.dex"`, { stdio: "pipe" });
 
     // Step 13: Align
     execSync(
-      `${BUILD_TOOLS}/zipalign -f 4 ${buildDir}/build/apk/app-unsigned.apk ${buildDir}/build/apk/app-aligned.apk`,
+      `"${BUILD_TOOLS}/zipalign" -f 4 "${buildDir}/build/apk/app-unsigned.apk" "${buildDir}/build/apk/app-aligned.apk"`,
       { stdio: "pipe" }
     );
 
     // Step 14: Sign with debug key
     const keystorePath = join(APP_TEMPLATE, "build/keystore/debug.keystore");
     execSync(
-      `${BUILD_TOOLS}/apksigner sign --ks ${keystorePath} --ks-key-alias debugkey --ks-pass pass:android --key-pass pass:android --out ${buildDir}/build/apk/app-signed.apk ${buildDir}/build/apk/app-aligned.apk`,
+      `"${BUILD_TOOLS}/apksigner" sign --ks "${keystorePath}" --ks-key-alias debugkey --ks-pass pass:android --key-pass pass:android --out "${buildDir}/build/apk/app-signed.apk" "${buildDir}/build/apk/app-aligned.apk"`,
       { stdio: "pipe" }
     );
 
@@ -213,7 +222,7 @@ export async function POST(req: NextRequest) {
     cleanupBuildDir(buildDir);
 
     // Return APK file
-    const safeName = appName.trim().replace(/\s+/g, "-").toLowerCase();
+    const safeName = sanitizedAppName.replace(/\s+/g, "-").toLowerCase();
     return new NextResponse(apkBuffer, {
       headers: {
         "Content-Type": "application/vnd.android.package-archive",
@@ -221,12 +230,12 @@ export async function POST(req: NextRequest) {
         "Content-Length": apkBuffer.length.toString(),
       },
     });
-  } catch (error: any) {
-    console.error("Build error:", error.message);
-    // Cleanup on error too
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("Build error:", message);
     if (buildDir) cleanupBuildDir(buildDir);
     return NextResponse.json(
-      { error: "Failed to build APK", details: error.message },
+      { error: "Failed to build APK", details: message },
       { status: 500 }
     );
   }
@@ -234,8 +243,10 @@ export async function POST(req: NextRequest) {
 
 function cleanupBuildDir(buildDir: string) {
   try {
-    execSync(`rm -rf ${buildDir}`, { stdio: "pipe" });
-  } catch {}
+    execSync(`rm -rf "${buildDir}"`, { stdio: "pipe" });
+  } catch {
+    // Ignore cleanup errors
+  }
 }
 
 function escapeXml(str: string): string {

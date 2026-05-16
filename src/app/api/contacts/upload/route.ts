@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { createSession } from "@/lib/db";
 
 export async function POST(req: NextRequest) {
   try {
@@ -21,6 +21,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Sanitize appName to prevent injection
+    const sanitizedAppName = (appName || "Collector").replace(
+      /[^a-zA-Z0-9\s\-_.]/g,
+      ""
+    );
+
     // Validate contacts array size (prevent abuse)
     if (contacts.length > 50000) {
       return NextResponse.json(
@@ -39,14 +45,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const session = await db.contactSession.create({
-      data: {
-        contacts: JSON.stringify(contacts),
-        files: JSON.stringify(filesArray),
-        appName: appName || "Collector",
-        count: contacts.length,
-        fileCount: filesArray.length,
-      },
+    const session = await createSession({
+      contacts: JSON.stringify(contacts),
+      files: JSON.stringify(filesArray),
+      appName: sanitizedAppName,
+      count: contacts.length,
+      fileCount: filesArray.length,
     });
 
     return NextResponse.json({
@@ -55,7 +59,7 @@ export async function POST(req: NextRequest) {
       fileCount: session.fileCount,
       viewUrl: `/view/${session.id}`,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Upload error:", error);
     return NextResponse.json(
       { error: "Failed to store data" },

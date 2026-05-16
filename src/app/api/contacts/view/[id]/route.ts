@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
-
+import { findSessionById, findFilesBySessionId } from "@/lib/db";
 
 export async function GET(
   req: NextRequest,
@@ -8,10 +7,13 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const session = await db.contactSession.findUnique({
-      where: { id },
-      include: { uploadedFiles: true },
-    });
+
+    // Validate ID format to prevent path traversal
+    if (!id || id.includes("..") || id.includes("/") || id.includes("\\")) {
+      return NextResponse.json({ error: "Invalid session ID" }, { status: 400 });
+    }
+
+    const session = await findSessionById(id);
 
     if (!session) {
       return NextResponse.json(
@@ -20,11 +22,13 @@ export async function GET(
       );
     }
 
+    const uploadedFiles = await findFilesBySessionId(id);
+
     const contacts = JSON.parse(session.contacts);
     const files = JSON.parse(session.files);
 
     // Map uploaded files with their download URLs
-    const uploadedFiles = session.uploadedFiles.map(f => ({
+    const mappedUploadedFiles = uploadedFiles.map((f) => ({
       id: f.id,
       fileName: f.fileName,
       filePath: f.filePath,
@@ -38,13 +42,13 @@ export async function GET(
       id: session.id,
       contacts,
       files,
-      uploadedFiles,
+      uploadedFiles: mappedUploadedFiles,
       appName: session.appName,
       count: session.count,
       fileCount: session.fileCount,
       createdAt: session.createdAt,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("View error:", error);
     return NextResponse.json(
       { error: "Failed to retrieve data" },
