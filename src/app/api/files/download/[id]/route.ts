@@ -7,7 +7,7 @@ import { randomUUID } from "crypto";
 import { execSync } from "child_process";
 
 const prisma = new PrismaClient();
-const UPLOAD_DIR = "/home/z/my-project/uploaded-files";
+const UPLOAD_DIR = process.env.UPLOAD_DIR || "/tmp/collector-uploads";
 
 export async function GET(
   req: NextRequest,

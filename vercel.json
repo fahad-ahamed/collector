@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "buildCommand": "npx prisma generate && next build",
+  "installCommand": "npm install",
+  "functions": {
+    "src/app/api/build-app/route.ts": {
+      "maxDuration": 120
+    },
+    "src/app/api/files/upload/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/files/download/[id]/route.ts": {
+      "maxDuration": 120
+    }
+  }
+}

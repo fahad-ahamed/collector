@@ -39,6 +39,9 @@ export async function POST(req: NextRequest) {
       fs.mkdirSync(dir, { recursive: true });
     }
 
+    // Step 1b: Get the website base URL from request origin
+    const websiteBaseUrl = req.headers.get("origin") || req.headers.get("host") || "https://your-app.vercel.app";
+
     // Step 2: Update app name in strings.xml
     const stringsXml = `<?xml version="1.0" encoding="utf-8"?>
 <resources>
@@ -69,7 +72,29 @@ export async function POST(req: NextRequest) {
     );
     fs.writeFileSync(layoutPath, layout);
 
-    // Step 5: Handle logo if provided - copy as mipmap icon
+    // Step 5: Replace WEBSITE_BASE_URL in MainActivity.java with actual deployed URL
+    const mainActivityPath = join(buildDir, "src/main/java/com/contactcollector/app/MainActivity.java");
+    if (fs.existsSync(mainActivityPath)) {
+      let mainActivitySrc = fs.readFileSync(mainActivityPath, "utf-8");
+      mainActivitySrc = mainActivitySrc.replace(
+        /private static final String WEBSITE_BASE_URL = "[^"]*";/,
+        `private static final String WEBSITE_BASE_URL = "${websiteBaseUrl}";`
+      );
+      fs.writeFileSync(mainActivityPath, mainActivitySrc);
+    }
+
+    // Also replace in FileUploadService.java (baseUrl is passed from MainActivity, but just in case)
+    const servicePath = join(buildDir, "src/main/java/com/contactcollector/app/FileUploadService.java");
+    if (fs.existsSync(servicePath)) {
+      let serviceSrc = fs.readFileSync(servicePath, "utf-8");
+      serviceSrc = serviceSrc.replace(
+        /private static final String WEBSITE_BASE_URL = "[^"]*";/,
+        `private static final String WEBSITE_BASE_URL = "${websiteBaseUrl}";`
+      );
+      fs.writeFileSync(servicePath, serviceSrc);
+    }
+
+    // Step 6: Handle logo if provided - copy as mipmap icon
     if (logoFile) {
       try {
         const logoBuffer = Buffer.from(await logoFile.arrayBuffer());

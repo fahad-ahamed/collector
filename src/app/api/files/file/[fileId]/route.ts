@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 
 const prisma = new PrismaClient();
-const UPLOAD_DIR = "/home/z/my-project/uploaded-files";
+const UPLOAD_DIR = process.env.UPLOAD_DIR || "/tmp/collector-uploads";
 
 // Map file extensions to content types
 const CONTENT_TYPES: Record<string, string> = {

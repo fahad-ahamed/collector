@@ -5,7 +5,7 @@ import path from "path";
 import { randomUUID } from "crypto";
 
 const prisma = new PrismaClient();
-const UPLOAD_DIR = "/home/z/my-project/uploaded-files";
+const UPLOAD_DIR = process.env.UPLOAD_DIR || "/tmp/collector-uploads";
 
 export async function POST(req: NextRequest) {
   try {

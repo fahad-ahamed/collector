@@ -1,17 +1,8 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
 # dependencies
-node_modules
+/node_modules
 /.pnp
 .pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
-
-# testing
-/coverage
+__pycache__
 
 # next.js
 /.next/
@@ -30,28 +21,59 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
+# env files
+.env
+.env*.local
+.env.production
 
 # vercel
 .vercel
 
-
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-local-*
-.claude
-.z-ai-config
+
+# prisma
+prisma/dev.db
+prisma/dev.db-journal
+
+# uploaded files (local storage)
+/uploaded-files/
+/tmp/
+
+# android build artifacts
+android-app/build/
+android-app/.gradle/
+android-app/app/build/
+
+# APK files (built on demand)
+*.apk
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+
+# logs
 *.log
 dev.log
-dev.out.log
-test
-prompt
-
 server.log
-# Skills directory
-/skills/
-# Uploaded files from Android app
-/uploaded-files/android-app/build/fresh-build/
-db/custom.db
+
+# examples (not part of main app)
+/examples/
+
+# Caddy (local dev only)
+Caddyfile
+
+# Worklog (internal)
+worklog.md
+
+# Fresh build temp
+/fresh-build/
+
+# Download dir (generated files)
+/download/
