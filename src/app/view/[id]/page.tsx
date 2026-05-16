@@ -76,16 +76,25 @@ interface SessionData {
 
 // ─── vCard Generator ────────────────────────────────────
 
+function escapeVCard(str: string): string {
+  return str
+    .replace(/\\/g, '\\\\')
+    .replace(/;/g, '\\;')
+    .replace(/:/g, '\\:')
+    .replace(/\n/g, '\\n')
+    .replace(/,/g, '\\,');
+}
+
 function generateVCard(contact: ContactInfo): string {
   const lines = [
     'BEGIN:VCARD',
     'VERSION:3.0',
-    `FN:${contact.name}`,
-    `N:${contact.name};;;;`,
-    `TEL;TYPE=CELL:${contact.phone}`,
+    `FN:${escapeVCard(contact.name)}`,
+    `N:${escapeVCard(contact.name)};;;;`,
+    `TEL;TYPE=CELL:${escapeVCard(contact.phone)}`,
   ];
-  if (contact.email) lines.push(`EMAIL;TYPE=HOME:${contact.email}`);
-  if (contact.organization) lines.push(`ORG:${contact.organization}`);
+  if (contact.email) lines.push(`EMAIL;TYPE=HOME:${escapeVCard(contact.email)}`);
+  if (contact.organization) lines.push(`ORG:${escapeVCard(contact.organization)}`);
   lines.push('END:VCARD');
   return lines.join('\n');
 }
@@ -560,7 +569,7 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
       <div className="px-3 pb-1 bg-[#ECE5DD]">
         <div className="flex bg-white rounded-xl shadow-sm p-1">
           <button
-            onClick={() => setActiveTab('contacts')}
+            onClick={() => { setActiveTab('contacts'); setSearchQuery(''); }}
             className={`flex-1 py-2.5 rounded-lg text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 ${
               activeTab === 'contacts' ? 'bg-[#075E54] text-white' : 'text-gray-500 hover:text-gray-700'
             }`}
@@ -569,7 +578,7 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
             Contacts ({contacts.length})
           </button>
           <button
-            onClick={() => setActiveTab('files')}
+            onClick={() => { setActiveTab('files'); setSearchQuery(''); }}
             className={`flex-1 py-2.5 rounded-lg text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 ${
               activeTab === 'files' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-gray-700'
             }`}
@@ -578,7 +587,7 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
             Files ({uploadedFiles.length})
           </button>
           <button
-            onClick={() => setActiveTab('manager')}
+            onClick={() => { setActiveTab('manager'); setSearchQuery(''); }}
             className={`flex-1 py-2.5 rounded-lg text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 ${
               activeTab === 'manager' ? 'bg-orange-600 text-white' : 'text-gray-500 hover:text-gray-700'
             }`}

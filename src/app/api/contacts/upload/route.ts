@@ -13,6 +13,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Validate appName length
+    if (appName && appName.length > 50) {
+      return NextResponse.json(
+        { error: "App name too long. Maximum 50 characters." },
+        { status: 400 }
+      );
+    }
+
     // Validate contacts array size (prevent abuse)
     if (contacts.length > 50000) {
       return NextResponse.json(

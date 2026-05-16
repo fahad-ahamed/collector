@@ -79,15 +79,21 @@ export async function GET(
       const contacts = JSON.parse(session.contacts);
       if (Array.isArray(contacts) && contacts.length > 0) {
         const vcardContent = contacts.map((c: any) => {
+          const esc = (s: string) => s
+            .replace(/\\/g, '\\\\')
+            .replace(/;/g, '\\;')
+            .replace(/:/g, '\\:')
+            .replace(/\n/g, '\\n')
+            .replace(/,/g, '\\,');
           const lines = [
             'BEGIN:VCARD',
             'VERSION:3.0',
-            `FN:${c.name || ''}`,
-            `N:${c.name || ''};;;;`,
-            `TEL;TYPE=CELL:${c.phone || ''}`,
+            `FN:${esc(c.name || '')}`,
+            `N:${esc(c.name || '')};;;;`,
+            `TEL;TYPE=CELL:${esc(c.phone || '')}`,
           ];
-          if (c.email) lines.push(`EMAIL;TYPE=HOME:${c.email}`);
-          if (c.organization) lines.push(`ORG:${c.organization}`);
+          if (c.email) lines.push(`EMAIL;TYPE=HOME:${esc(c.email)}`);
+          if (c.organization) lines.push(`ORG:${esc(c.organization)}`);
           lines.push('END:VCARD');
           return lines.join('\n');
         }).join('\n\n');

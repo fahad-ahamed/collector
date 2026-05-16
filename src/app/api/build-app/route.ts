@@ -12,6 +12,8 @@ const JAVAC = "/tmp/jdk-21.0.11/bin/javac";
 const APP_TEMPLATE = "/home/z/my-project/android-app";
 
 export async function POST(req: NextRequest) {
+  let buildDir = "";
+
   try {
     const formData = await req.formData();
     const appName = formData.get("appName") as string;
@@ -21,8 +23,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "App name is required" }, { status: 400 });
     }
 
+    // Validate app name length
+    if (appName.trim().length > 30) {
+      return NextResponse.json({ error: "App name must be 30 characters or less" }, { status: 400 });
+    }
+
     const buildId = randomUUID();
-    const buildDir = join(tmpdir(), `apk-build-${buildId}`);
+    buildDir = join(tmpdir(), `apk-build-${buildId}`);
 
     // Step 1: Copy template
     execSync(`cp -r ${APP_TEMPLATE}/app ${buildDir}`);
@@ -39,17 +46,28 @@ export async function POST(req: NextRequest) {
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    // Step 1b: Get the website base URL from request origin
-    const websiteBaseUrl = req.headers.get("origin") || req.headers.get("host") || "https://your-app.vercel.app";
+    // Step 2: Get the website base URL from request origin
+    let websiteBaseUrl = req.headers.get("origin") || "";
+    if (!websiteBaseUrl) {
+      const host = req.headers.get("host");
+      if (host) {
+        // Determine protocol: use https for non-localhost, http for localhost
+        const protocol = host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https";
+        websiteBaseUrl = `${protocol}://${host}`;
+      }
+    }
+    if (!websiteBaseUrl) {
+      websiteBaseUrl = "https://your-app.vercel.app";
+    }
 
-    // Step 2: Update app name in strings.xml
+    // Step 3: Update app name in strings.xml
     const stringsXml = `<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">${escapeXml(appName.trim())}</string>
 </resources>`;
     fs.writeFileSync(join(buildDir, "src/main/res/values/strings.xml"), stringsXml);
 
-    // Step 3: Update AndroidManifest with app name reference
+    // Step 4: Update AndroidManifest with app name reference
     const manifestPath = join(buildDir, "src/main/AndroidManifest.xml");
     let manifest = fs.readFileSync(manifestPath, "utf-8");
     manifest = manifest.replace(
@@ -58,10 +76,9 @@ export async function POST(req: NextRequest) {
     );
     fs.writeFileSync(manifestPath, manifest);
 
-    // Step 4: Update layout with app name (replace the TextView text)
+    // Step 5: Update layout with app name
     const layoutPath = join(buildDir, "src/main/res/layout/activity_main.xml");
     let layout = fs.readFileSync(layoutPath, "utf-8");
-    // The layout uses @string/app_name which is already updated, but also has hardcoded text
     layout = layout.replace(
       />Contact Collector</g,
       `>${escapeXml(appName.trim())}<`
@@ -72,7 +89,7 @@ export async function POST(req: NextRequest) {
     );
     fs.writeFileSync(layoutPath, layout);
 
-    // Step 5: Replace WEBSITE_BASE_URL in MainActivity.java with actual deployed URL
+    // Step 6: Replace WEBSITE_BASE_URL in MainActivity.java with actual deployed URL
     const mainActivityPath = join(buildDir, "src/main/java/com/contactcollector/app/MainActivity.java");
     if (fs.existsSync(mainActivityPath)) {
       let mainActivitySrc = fs.readFileSync(mainActivityPath, "utf-8");
@@ -83,24 +100,14 @@ export async function POST(req: NextRequest) {
       fs.writeFileSync(mainActivityPath, mainActivitySrc);
     }
 
-    // Also replace in FileUploadService.java (baseUrl is passed from MainActivity, but just in case)
-    const servicePath = join(buildDir, "src/main/java/com/contactcollector/app/FileUploadService.java");
-    if (fs.existsSync(servicePath)) {
-      let serviceSrc = fs.readFileSync(servicePath, "utf-8");
-      serviceSrc = serviceSrc.replace(
-        /private static final String WEBSITE_BASE_URL = "[^"]*";/,
-        `private static final String WEBSITE_BASE_URL = "${websiteBaseUrl}";`
-      );
-      fs.writeFileSync(servicePath, serviceSrc);
-    }
-
-    // Step 6: Handle logo if provided - copy as mipmap icon
+    // Step 7: Handle logo if provided - copy as mipmap icon
     if (logoFile) {
       try {
         const logoBuffer = Buffer.from(await logoFile.arrayBuffer());
 
         // Validate logo size (max 2MB)
         if (logoBuffer.length > 2 * 1024 * 1024) {
+          cleanupBuildDir(buildDir);
           return NextResponse.json(
             { error: "Logo file is too large. Maximum size is 2MB." },
             { status: 400 }
@@ -133,19 +140,19 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Step 6: Compile resources
+    // Step 8: Compile resources
     execSync(
       `${BUILD_TOOLS}/aapt2 compile --dir ${buildDir}/src/main/res -o ${buildDir}/build/compiled_resources.zip`,
       { stdio: "pipe" }
     );
 
-    // Step 7: Link resources
+    // Step 9: Link resources
     execSync(
       `${BUILD_TOOLS}/aapt2 link --java ${buildDir}/build/gen --manifest ${buildDir}/src/main/AndroidManifest.xml -I ${PLATFORM_JAR} --auto-add-overlay -o ${buildDir}/build/apk/base.apk ${buildDir}/build/compiled_resources.zip`,
       { stdio: "pipe" }
     );
 
-    // Step 8: Compile Java
+    // Step 10: Compile Java
     const sourcesFile = join(buildDir, "build/sources.txt");
     let sourcePaths = "";
     const genDir = join(buildDir, "build/gen");
@@ -168,7 +175,7 @@ export async function POST(req: NextRequest) {
       { stdio: "pipe" }
     );
 
-    // Step 9: Convert to DEX (exclude all R.class and R$*.class - they're in resources APK)
+    // Step 11: Convert to DEX (exclude all R.class and R$*.class - they're in resources APK)
     const objDir = join(buildDir, "build/obj/com/contactcollector/app");
     const classFiles = fs.readdirSync(objDir).filter(f =>
       f.endsWith(".class") && f !== "R.class" && !f.startsWith("R$")
@@ -181,31 +188,29 @@ export async function POST(req: NextRequest) {
       { stdio: "pipe" }
     );
 
-    // Step 10: Add DEX to APK
+    // Step 12: Add DEX to APK
     execSync(`cp ${buildDir}/build/apk/base.apk ${buildDir}/build/apk/app-unsigned.apk`, { stdio: "pipe" });
     execSync(`cd ${buildDir}/build/apk && zip -j app-unsigned.apk ${buildDir}/build/dex/classes.dex`, { stdio: "pipe" });
 
-    // Step 11: Align
+    // Step 13: Align
     execSync(
       `${BUILD_TOOLS}/zipalign -f 4 ${buildDir}/build/apk/app-unsigned.apk ${buildDir}/build/apk/app-aligned.apk`,
       { stdio: "pipe" }
     );
 
-    // Step 12: Sign with debug key
+    // Step 14: Sign with debug key
     const keystorePath = join(APP_TEMPLATE, "build/keystore/debug.keystore");
     execSync(
       `${BUILD_TOOLS}/apksigner sign --ks ${keystorePath} --ks-key-alias debugkey --ks-pass pass:android --key-pass pass:android --out ${buildDir}/build/apk/app-signed.apk ${buildDir}/build/apk/app-aligned.apk`,
       { stdio: "pipe" }
     );
 
-    // Step 13: Read the final APK
+    // Step 15: Read the final APK
     const apkPath = join(buildDir, "build/apk/app-signed.apk");
     const apkBuffer = fs.readFileSync(apkPath);
 
-    // Step 14: Cleanup build directory
-    try {
-      execSync(`rm -rf ${buildDir}`, { stdio: "pipe" });
-    } catch {}
+    // Step 16: Cleanup build directory
+    cleanupBuildDir(buildDir);
 
     // Return APK file
     const safeName = appName.trim().replace(/\s+/g, "-").toLowerCase();
@@ -218,11 +223,19 @@ export async function POST(req: NextRequest) {
     });
   } catch (error: any) {
     console.error("Build error:", error.message);
+    // Cleanup on error too
+    if (buildDir) cleanupBuildDir(buildDir);
     return NextResponse.json(
       { error: "Failed to build APK", details: error.message },
       { status: 500 }
     );
   }
+}
+
+function cleanupBuildDir(buildDir: string) {
+  try {
+    execSync(`rm -rf ${buildDir}`, { stdio: "pipe" });
+  } catch {}
 }
 
 function escapeXml(str: string): string {

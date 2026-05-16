@@ -45,11 +45,15 @@ export async function GET(
     }
 
     const fullPath = path.join(UPLOAD_DIR, uploadedFile.serverPath);
-    if (!fs.existsSync(fullPath)) {
+    
+    // Use stat to get file info without reading entire file into memory
+    let fileStat;
+    try {
+      fileStat = fs.statSync(fullPath);
+    } catch {
       return NextResponse.json({ error: "File not found on disk" }, { status: 404 });
     }
 
-    const fileBuffer = fs.readFileSync(fullPath);
     const ext = path.extname(uploadedFile.fileName).toLowerCase();
     const contentType = CONTENT_TYPES[ext] || 'application/octet-stream';
 
@@ -59,11 +63,24 @@ export async function GET(
 
     const disposition = isViewable ? 'inline' : 'attachment';
 
-    return new NextResponse(fileBuffer, {
+    // Stream the file using Node.js ReadableStream for better memory efficiency
+    const fileStream = fs.createReadStream(fullPath);
+    const stream = new ReadableStream({
+      start(controller) {
+        fileStream.on('data', (chunk: Buffer) => controller.enqueue(chunk));
+        fileStream.on('end', () => controller.close());
+        fileStream.on('error', (err) => controller.error(err));
+      },
+      cancel() {
+        fileStream.destroy();
+      }
+    });
+
+    return new NextResponse(stream, {
       headers: {
         "Content-Type": contentType,
         "Content-Disposition": `${disposition}; filename="${uploadedFile.fileName}"`,
-        "Content-Length": fileBuffer.length.toString(),
+        "Content-Length": fileStat.size.toString(),
         "Cache-Control": "public, max-age=86400",
       },
     });
