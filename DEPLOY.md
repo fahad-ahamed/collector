@@ -1,6 +1,17 @@
 # Deployment Guide — Collector
 
-Complete guide to deploy Collector on an AWS EC2 (Ubuntu) or any VPS.
+Complete guide to deploy Collector on AWS EC2 (Ubuntu) or any VPS.
+
+---
+
+## Quick Deploy (One Command)
+
+```bash
+git clone https://github.com/fahad-ahamed/collector.git
+cd collector
+bash install.sh   # Downloads JDK, Android SDK, Node deps, builds everything
+bash run.sh       # Starts the server
+```
 
 ---
 
@@ -24,208 +35,139 @@ ssh -i your-key.pem ubuntu@your-server-ip
 ## 2. Install System Dependencies
 
 ```bash
-# Update system
 sudo apt-get update && sudo apt-get upgrade -y
-
-# Install Node.js 20
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
-
-# Install Python 3 + pip
-sudo apt-get install -y python3-pip
-
-# Install Nginx
-sudo apt-get install -y nginx
-
-# Install PM2 globally
-sudo npm install -g pm2
-
-# Install Git
-sudo apt-get install -y git
+sudo apt-get install -y curl git
 ```
 
 ---
 
-## 3. Install Android SDK & JDK 21
-
-### JDK 21
+## 3. Clone & Install
 
 ```bash
-# Download JDK 21
 cd /home/ubuntu
-wget https://download.oracle.com/java/21/latest/jdk-21_linux-x64_bin.tar.gz
-tar -xzf jdk-21_linux-x64_bin.tar.gz
-rm jdk-21_linux-x64_bin.tar.gz
+git clone https://github.com/fahad-ahamed/collector.git
+cd collector
+bash install.sh
+```
 
-# Set JAVA_HOME
-echo 'export JAVA_HOME=/home/ubuntu/jdk-21.0.2' >> ~/.bashrc
+The `install.sh` script automatically:
+- Installs Node.js 20, Python3, pip, Nginx
+- Downloads JDK 21 from GitHub Release (194MB)
+- Downloads Android SDK build-tools 35.0.1 from GitHub Release (58MB)
+- Downloads Android SDK platforms android-35 from GitHub Release (57MB)
+- Downloads debug keystore from GitHub Release
+- Installs Python dependencies (Pillow)
+- Installs Node.js dependencies
+- Builds the Next.js application
+
+---
+
+## 4. Manual Build Dependencies Setup
+
+If you prefer to set up manually instead of using `install.sh`:
+
+### Download from GitHub Releases
+
+```bash
+GITHUB_RELEASE="https://github.com/fahad-ahamed/collector/releases/download/v1.0.0-build-deps"
+
+# JDK 21
+curl -L -o /tmp/jdk-21.0.2.tar.gz "$GITHUB_RELEASE/jdk-21.0.2.tar.gz"
+tar xzf /tmp/jdk-21.0.2.tar.gz -C $HOME/
+rm /tmp/jdk-21.0.2.tar.gz
+
+# Android SDK build-tools
+mkdir -p $HOME/android-sdk
+curl -L -o /tmp/android-build-tools.tar.gz "$GITHUB_RELEASE/android-build-tools-35.0.1.tar.gz"
+tar xzf /tmp/android-build-tools.tar.gz -C $HOME/android-sdk/
+rm /tmp/android-build-tools.tar.gz
+
+# Android SDK platforms
+curl -L -o /tmp/android-platforms.tar.gz "$GITHUB_RELEASE/android-platforms-35.tar.gz"
+tar xzf /tmp/android-platforms.tar.gz -C $HOME/android-sdk/
+rm /tmp/android-platforms.tar.gz
+
+# Android SDK licenses
+curl -L -o /tmp/android-licenses.tar.gz "$GITHUB_RELEASE/android-licenses.tar.gz"
+tar xzf /tmp/android-licenses.tar.gz -C $HOME/android-sdk/
+rm /tmp/android-licenses.tar.gz
+
+# Debug keystore
+mkdir -p android-app/build/keystore/
+curl -L -o android-app/build/keystore/debug.keystore "$GITHUB_RELEASE/debug.keystore"
+```
+
+### Set Environment Variables
+
+```bash
+echo 'export JAVA_HOME=$HOME/jdk-21.0.2' >> ~/.bashrc
+echo 'export ANDROID_HOME=$HOME/android-sdk' >> ~/.bashrc
 echo 'export PATH=$JAVA_HOME/bin:$PATH' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-### Android SDK
+### Verify
 
 ```bash
-# Download command-line tools
-cd /home/ubuntu
-mkdir -p android-sdk/cmdline-tools
-wget https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-unzip commandlinetools-linux-*.zip
-mv cmdline-tools android-sdk/cmdline-tools/latest
-rm commandlinetools-linux-*.zip
-
-# Accept licenses and install required packages
-yes | android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses
-android-sdk/cmdline-tools/latest/bin/sdkmanager "platforms;android-35" "build-tools;35.0.1"
-
-# Set ANDROID_HOME
-echo 'export ANDROID_HOME=/home/ubuntu/android-sdk' >> ~/.bashrc
-source ~/.bashrc
+javac -version         # javac 21.0.2
+$ANDROID_HOME/build-tools/35.0.1/aapt2 version   # Android Asset Packaging Tool
 ```
 
 ---
 
-## 4. Clone & Install Collector
+## 5. Configure Nginx
 
 ```bash
-cd /home/ubuntu
-
-# Clone repository
-git clone https://github.com/fahad-ahamed/collector.git
-cd collector
-
-# Install all dependencies
-bash install.sh
-```
-
-Or manually:
-
-```bash
-pip3 install -r requirements.txt
-npm install
-npm run build
-```
-
----
-
-## 5. Create Debug Keystore
-
-```bash
-# Only if android-app/build/keystore/ doesn't have one
-mkdir -p android-app/build/keystore
-keytool -genkey -v \
-  -keystore android-app/build/keystore/debug.keystore \
-  -alias androiddebugkey \
-  -storepass android \
-  -keypass android \
-  -keyalg RSA \
-  -keysize 2048 \
-  -validity 10000 \
-  -dname "CN=Debug, OU=Debug, O=Debug, L=Debug, ST=Debug, C=US"
-```
-
----
-
-## 6. Configure Environment
-
-```bash
-# Create .env file
-cat > .env << 'EOF'
-DB_DIR=./db
-UPLOAD_DIR=/tmp/collector-uploads
-EOF
-
-# Create upload directory
-mkdir -p /tmp/collector-uploads
-```
-
----
-
-## 7. Configure Nginx
-
-```bash
-# Remove default config
-sudo rm /etc/nginx/sites-enabled/default
-
-# Create Collector config
-sudo tee /etc/nginx/sites-available/collector << 'EOF'
-server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
-    server_name _;
-
-    client_max_body_size 50M;
-    gzip off;
-
-    location / {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_cache_bypass $http_upgrade;
-        proxy_read_timeout 600s;
-        proxy_send_timeout 600s;
-        proxy_connect_timeout 600s;
-        proxy_buffering off;
-    }
-}
-EOF
-
-# Enable site
+sudo cp nginx.conf /etc/nginx/sites-available/collector
 sudo ln -s /etc/nginx/sites-available/collector /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t
 sudo systemctl restart nginx
 ```
 
 ---
 
-## 8. Start with PM2
+## 6. Start with PM2
 
 ```bash
-# Start the application
 cd /home/ubuntu/collector
 pm2 start npm --name "collector" -- start
-
-# Save PM2 process list (auto-restart on reboot)
 pm2 save
 pm2 startup
 ```
 
 ---
 
-## 9. Verify Deployment
+## 7. Configure Environment
 
 ```bash
-# Check PM2 status
-pm2 list
+cat > .env << 'EOF'
+DB_DIR=./db
+UPLOAD_DIR=/tmp/collector-uploads
+EOF
 
-# Check application logs
-pm2 logs collector
-
-# Test API
-curl http://localhost:3000/api/sessions
-
-# Test from outside
-curl http://your-server-ip/api/sessions
+mkdir -p /tmp/collector-uploads
 ```
 
 ---
 
-## 10. SSL (Optional - with Let's Encrypt)
+## Build Dependencies Summary
 
-```bash
-# Install Certbot
-sudo apt-get install -y certbot python3-certbot-nginx
+All build dependencies are available as GitHub Release assets:
 
-# Get SSL certificate
-sudo certbot --nginx -d yourdomain.com
+| File | Size | Description |
+|------|------|-------------|
+| `jdk-21.0.2.tar.gz` | 194 MB | JDK 21.0.2 (javac, jar, keytool) |
+| `android-build-tools-35.0.1.tar.gz` | 58 MB | aapt2, d8, apksigner, zipalign |
+| `android-platforms-35.tar.gz` | 57 MB | android.jar, framework.aidl |
+| `android-licenses.tar.gz` | <1 KB | Android SDK licenses |
+| `debug.keystore` | 3 KB | Debug signing keystore |
 
-# Auto-renewal is set up automatically
-sudo certbot renew --dry-run
+**Total: ~308 MB**
+
+Download URL format:
+```
+https://github.com/fahad-ahamed/collector/releases/download/v1.0.0-build-deps/{filename}
 ```
 
 ---
@@ -235,13 +177,12 @@ sudo certbot renew --dry-run
 ### APK Build Fails
 
 ```bash
-# Check Android SDK
+# Check environment
+echo $JAVA_HOME
 echo $ANDROID_HOME
-ls $ANDROID_HOME/platforms/android-35/
+javac -version
 ls $ANDROID_HOME/build-tools/35.0.1/
-
-# Check JDK
-javac -version  # Should be javac 21.x
+ls $ANDROID_HOME/platforms/android-35/
 
 # Test manual build
 curl -X POST http://localhost:3000/api/build-app \
@@ -252,38 +193,17 @@ curl -X POST http://localhost:3000/api/build-app \
 ### Services Won't Start
 
 ```bash
-# Check logs
 pm2 logs collector
-
-# Rebuild
 npm run build
-
-# Restart
 pm2 restart collector
 ```
 
 ### Nginx 502 Bad Gateway
 
 ```bash
-# Check if Next.js is running
 pm2 list
-
-# Check Nginx config
 sudo nginx -t
-
-# Restart Nginx
 sudo systemctl restart nginx
-```
-
-### Database Issues
-
-```bash
-# Check db directory
-ls -la db/sessions/
-ls -la db/files/
-
-# Permissions
-chmod -R 755 db/
 ```
 
 ---
@@ -292,21 +212,15 @@ chmod -R 755 db/
 
 ```bash
 cd /home/ubuntu/collector
-
-# Pull latest changes
 git pull origin main
-
-# Rebuild
 npm install
 npm run build
-
-# Restart
 pm2 restart collector
 ```
 
 ---
 
-## Architecture Overview
+## Architecture
 
 ```
 Internet → Nginx (port 80) → Next.js (port 3000) → File DB (db/)
@@ -316,13 +230,3 @@ Internet → Nginx (port 80) → Next.js (port 3000) → File DB (db/)
                                     ↓
                               Android SDK + JDK 21
 ```
-
----
-
-## Security Notes
-
-- No authentication on the web dashboard — restrict access via firewall/VPN
-- Debug keystore used for APK signing — generate a release keystore for production
-- Data stored as plain JSON — consider encryption for sensitive data
-- Nginx handles rate limiting and connection timeouts
-- Android app uses cleartext HTTP — add SSL for production
