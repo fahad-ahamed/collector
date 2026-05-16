@@ -128,18 +128,28 @@ export default function CollectorHome() {
       });
 
       if (!res.ok) {
-        throw new Error('Build failed');
+        const errData = await res.json().catch(() => null);
+        const errMsg = errData?.error || errData?.details || 'Build failed. The server may not support APK building.';
+        throw new Error(errMsg);
       }
 
       setBuildProgress('App built! Downloading...');
 
       // Get the APK as blob
       const blob = await res.blob();
+
+      // Verify it's actually an APK (not an error JSON response with wrong content-type)
+      if (blob.size < 1000 || blob.type.includes('json')) {
+        throw new Error('Received invalid APK file. The server may not have Android SDK installed.');
+      }
+
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `${appName.trim().replace(/\s+/g, '-').toLowerCase()}.apk`;
+      document.body.appendChild(a);
       a.click();
+      document.body.removeChild(a);
       URL.revokeObjectURL(url);
 
       setBuildProgress('Download complete!');
@@ -149,12 +159,12 @@ export default function CollectorHome() {
         setAppLogo(null);
         setLogoPreview(null);
       }, 1000);
-    } catch (err) {
-      alert('Failed to build app. Please try again.');
+    } catch (err: any) {
+      alert(err.message || 'Failed to build app. Please try again.');
+    } finally {
+      setBuilding(false);
+      setBuildProgress('');
     }
-
-    setBuilding(false);
-    setBuildProgress('');
   }, [appName, appLogo]);
 
   // ═══════════════════════════════════════════════════════

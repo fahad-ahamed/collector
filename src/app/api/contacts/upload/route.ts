@@ -13,7 +13,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Validate contacts array size (prevent abuse)
+    if (contacts.length > 50000) {
+      return NextResponse.json(
+        { error: "Too many contacts. Maximum 50,000." },
+        { status: 400 }
+      );
+    }
+
     const filesArray = Array.isArray(files) ? files : [];
+
+    // Validate files array size
+    if (filesArray.length > 100000) {
+      return NextResponse.json(
+        { error: "Too many files. Maximum 100,000." },
+        { status: 400 }
+      );
+    }
 
     const session = await db.contactSession.create({
       data: {

@@ -21,6 +21,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Validate file size (max 100MB)
+    const MAX_FILE_SIZE = 100 * 1024 * 1024;
+    if (file.size > MAX_FILE_SIZE) {
+      return NextResponse.json(
+        { error: "File too large. Maximum size is 100MB." },
+        { status: 400 }
+      );
+    }
+
     // Verify session exists
     const session = await db.contactSession.findUnique({
       where: { id: sessionId },

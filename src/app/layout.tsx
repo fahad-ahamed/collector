@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
@@ -13,18 +13,23 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  themeColor: "#075E54",
+};
+
 export const metadata: Metadata = {
   title: "Collector - Access Control Panel",
   description: "Collector - Full access control panel for contacts & files. View, download, and manage all your phone data from anywhere.",
   keywords: ["Collector", "contacts", "files", "phone manager", "access control"],
   authors: [{ name: "Collector" }],
-  icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
-  },
   openGraph: {
     title: "Collector - Access Control Panel",
     description: "Full access control panel for contacts & files from your phone",
     type: "website",
+    siteName: "Collector",
   },
 };
 

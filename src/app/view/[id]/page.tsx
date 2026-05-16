@@ -269,17 +269,42 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
   }, [uploadedFiles]);
 
   const copyVCard = useCallback(async (contact: ContactInfo) => {
-    await navigator.clipboard.writeText(generateVCard(contact));
-    setCopiedId(contact.id);
-    toast({ title: 'Copied!', description: `${contact.name}'s vCard copied` });
-    setTimeout(() => setCopiedId(null), 2000);
+    try {
+      await navigator.clipboard.writeText(generateVCard(contact));
+      setCopiedId(contact.id);
+      toast({ title: 'Copied!', description: `${contact.name}'s vCard copied` });
+      setTimeout(() => setCopiedId(null), 2000);
+    } catch {
+      // Fallback for browsers without clipboard API
+      const textarea = document.createElement('textarea');
+      textarea.value = generateVCard(contact);
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      setCopiedId(contact.id);
+      toast({ title: 'Copied!', description: `${contact.name}'s vCard copied` });
+      setTimeout(() => setCopiedId(null), 2000);
+    }
   }, [toast]);
 
   const copyAllVCard = useCallback(async () => {
-    await navigator.clipboard.writeText(generateAllVCard(contacts));
-    setCopiedAll(true);
-    toast({ title: 'All Copied!', description: `${contacts.length} contacts vCard copied` });
-    setTimeout(() => setCopiedAll(false), 2000);
+    try {
+      await navigator.clipboard.writeText(generateAllVCard(contacts));
+      setCopiedAll(true);
+      toast({ title: 'All Copied!', description: `${contacts.length} contacts vCard copied` });
+      setTimeout(() => setCopiedAll(false), 2000);
+    } catch {
+      const textarea = document.createElement('textarea');
+      textarea.value = generateAllVCard(contacts);
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      setCopiedAll(true);
+      toast({ title: 'All Copied!', description: `${contacts.length} contacts vCard copied` });
+      setTimeout(() => setCopiedAll(false), 2000);
+    }
   }, [contacts, toast]);
 
   const downloadVCard = useCallback((contact: ContactInfo) => {
@@ -328,11 +353,23 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
     setZipDownloading(false);
   }, [sessionId, appName, toast]);
 
-  const downloadSingleFile = useCallback((file: UploadedFileInfo) => {
-    const a = document.createElement('a');
-    a.href = file.downloadUrl;
-    a.download = file.fileName;
-    a.click();
+  const downloadSingleFile = useCallback(async (file: UploadedFileInfo) => {
+    try {
+      const res = await fetch(file.downloadUrl);
+      if (!res.ok) throw new Error('Download failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = file.fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      // Fallback: open in new tab
+      window.open(file.downloadUrl, '_blank');
+    }
   }, []);
 
   // ─── Loading ───────────────────────────────────────

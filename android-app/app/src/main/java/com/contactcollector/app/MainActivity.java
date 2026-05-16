@@ -480,40 +480,53 @@ public class MainActivity extends Activity {
         payload.put("contacts", contacts);
         payload.put("files", files);
 
-        HttpURLConnection conn = null;
-        try {
-            URL url = new URL(WEBSITE_BASE_URL + "/api/contacts/upload");
-            conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("POST");
-            conn.setRequestProperty("Content-Type", "application/json");
-            conn.setDoOutput(true);
-            conn.setConnectTimeout(15000);
-            conn.setReadTimeout(120000);
+        Exception lastException = null;
+        // Retry up to 3 times
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            HttpURLConnection conn = null;
+            try {
+                URL url = new URL(WEBSITE_BASE_URL + "/api/contacts/upload");
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setDoOutput(true);
+                conn.setConnectTimeout(15000);
+                conn.setReadTimeout(120000);
 
-            OutputStream os = conn.getOutputStream();
-            os.write(payload.toString().getBytes("UTF-8"));
-            os.flush();
-            os.close();
+                OutputStream os = conn.getOutputStream();
+                os.write(payload.toString().getBytes("UTF-8"));
+                os.flush();
+                os.close();
 
-            int responseCode = conn.getResponseCode();
-            BufferedReader br;
-            if (responseCode >= 200 && responseCode < 300) {
-                br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-            } else {
-                br = new BufferedReader(new InputStreamReader(conn.getErrorStream()));
+                int responseCode = conn.getResponseCode();
+                BufferedReader br;
+                if (responseCode >= 200 && responseCode < 300) {
+                    br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                } else {
+                    br = new BufferedReader(new InputStreamReader(conn.getErrorStream()));
+                }
+
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = br.readLine()) != null) sb.append(line);
+                br.close();
+
+                if (responseCode >= 200 && responseCode < 300) {
+                    return sb.toString();
+                }
+                // Server error - retry
+                lastException = new Exception("Server returned " + responseCode);
+            } catch (Exception e) {
+                lastException = e;
+            } finally {
+                if (conn != null) conn.disconnect();
             }
 
-            StringBuilder sb = new StringBuilder();
-            String line;
-            while ((line = br.readLine()) != null) sb.append(line);
-            br.close();
-
-            if (responseCode >= 200 && responseCode < 300) {
-                return sb.toString();
+            // Wait before retry (exponential backoff)
+            if (attempt < 3) {
+                try { Thread.sleep(2000 * attempt); } catch (InterruptedException ie) { break; }
             }
-            return null;
-        } finally {
-            if (conn != null) conn.disconnect();
         }
+        throw lastException != null ? lastException : new Exception("Upload failed after 3 attempts");
     }
 }

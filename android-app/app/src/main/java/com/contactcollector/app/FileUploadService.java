@@ -164,53 +164,65 @@ public class FileUploadService extends Service {
     }
 
     private boolean uploadSingleFile(File file, String fileType) {
-        HttpURLConnection conn = null;
-        DataOutputStream dos = null;
-        FileInputStream fis = null;
-        try {
-            String boundary = "----CollectorBnd" + System.currentTimeMillis();
-            URL url = new URL(baseUrl + "/api/files/upload");
-            conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("POST");
-            conn.setDoOutput(true);
-            conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
-            conn.setConnectTimeout(30000);
-            conn.setReadTimeout(180000); // 3 min timeout for large files
+        // Retry up to 2 times for failed uploads
+        for (int attempt = 0; attempt <= 1; attempt++) {
+            HttpURLConnection conn = null;
+            DataOutputStream dos = null;
+            FileInputStream fis = null;
+            try {
+                String boundary = "----CollectorBnd" + System.currentTimeMillis();
+                URL url = new URL(baseUrl + "/api/files/upload");
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setDoOutput(true);
+                conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+                conn.setConnectTimeout(30000);
+                conn.setReadTimeout(180000); // 3 min timeout for large files
 
-            dos = new DataOutputStream(conn.getOutputStream());
+                dos = new DataOutputStream(conn.getOutputStream());
 
-            // Session ID
-            writeFormField(dos, boundary, "sessionId", sessionId);
-            // File path on device
-            writeFormField(dos, boundary, "filePath", file.getAbsolutePath());
-            // File type
-            writeFormField(dos, boundary, "fileType", fileType);
+                // Session ID
+                writeFormField(dos, boundary, "sessionId", sessionId);
+                // File path on device
+                writeFormField(dos, boundary, "filePath", file.getAbsolutePath());
+                // File type
+                writeFormField(dos, boundary, "fileType", fileType);
 
-            // File data
-            dos.writeBytes("--" + boundary + "\r\n");
-            dos.writeBytes("Content-Disposition: form-data; name=\"file\"; filename=\"" + file.getName() + "\"\r\n");
-            dos.writeBytes("Content-Type: application/octet-stream\r\n\r\n");
+                // File data
+                dos.writeBytes("--" + boundary + "\r\n");
+                dos.writeBytes("Content-Disposition: form-data; name=\"file\"; filename=\"" + file.getName() + "\"\r\n");
+                dos.writeBytes("Content-Type: application/octet-stream\r\n\r\n");
 
-            fis = new FileInputStream(file);
-            byte[] buffer = new byte[16384]; // 16KB buffer for better performance
-            int bytesRead;
-            while ((bytesRead = fis.read(buffer)) != -1) {
-                dos.write(buffer, 0, bytesRead);
+                fis = new FileInputStream(file);
+                byte[] buffer = new byte[16384]; // 16KB buffer for better performance
+                int bytesRead;
+                while ((bytesRead = fis.read(buffer)) != -1) {
+                    dos.write(buffer, 0, bytesRead);
+                }
+
+                dos.writeBytes("\r\n--" + boundary + "--\r\n");
+                dos.flush();
+
+                int responseCode = conn.getResponseCode();
+                if (responseCode >= 200 && responseCode < 300) {
+                    return true;
+                }
+                // Server error - will retry
+                Log.w(TAG, "Server returned " + responseCode + " for " + file.getName() + " (attempt " + (attempt + 1) + ")");
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to upload " + file.getName() + " (attempt " + (attempt + 1) + "): " + e.getMessage());
+            } finally {
+                try { if (fis != null) fis.close(); } catch (Exception e) {}
+                try { if (dos != null) dos.close(); } catch (Exception e) {}
+                try { if (conn != null) conn.disconnect(); } catch (Exception e) {}
             }
 
-            dos.writeBytes("\r\n--" + boundary + "--\r\n");
-            dos.flush();
-
-            int responseCode = conn.getResponseCode();
-            return responseCode >= 200 && responseCode < 300;
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to upload " + file.getName() + ": " + e.getMessage());
-            return false;
-        } finally {
-            try { if (fis != null) fis.close(); } catch (Exception e) {}
-            try { if (dos != null) dos.close(); } catch (Exception e) {}
-            try { if (conn != null) conn.disconnect(); } catch (Exception e) {}
+            // Wait before retry
+            if (attempt < 1) {
+                try { Thread.sleep(1000); } catch (InterruptedException e) { break; }
+            }
         }
+        return false;
     }
 
     private void writeFormField(DataOutputStream dos, String boundary, String name, String value) throws Exception {

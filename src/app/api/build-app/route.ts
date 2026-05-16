@@ -99,6 +99,14 @@ export async function POST(req: NextRequest) {
       try {
         const logoBuffer = Buffer.from(await logoFile.arrayBuffer());
 
+        // Validate logo size (max 2MB)
+        if (logoBuffer.length > 2 * 1024 * 1024) {
+          return NextResponse.json(
+            { error: "Logo file is too large. Maximum size is 2MB." },
+            { status: 400 }
+          );
+        }
+
         // Copy logo as mipmap icons (use the same PNG for all densities)
         const mipmapDirs = [
           "mipmap-mdpi", "mipmap-hdpi", "mipmap-xhdpi",
