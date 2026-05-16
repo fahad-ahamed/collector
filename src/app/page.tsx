@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   Phone,
   Download,
@@ -8,18 +8,13 @@ import {
   Check,
   Users,
   ChevronRight,
-  Shield,
   AlertCircle,
   ArrowLeft,
   Search,
   X,
   FileText,
   Share2,
-  Upload,
-  Smartphone,
-  Monitor,
   RefreshCw,
-  Trash2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -59,50 +54,12 @@ function generateAllVCard(contacts: ContactInfo[]): string {
   return contacts.map(generateVCard).join('\n\n');
 }
 
-// ─── vCard Parser ───────────────────────────────────────
-
-function parseVCardFile(text: string): ContactInfo[] {
-  const contacts: ContactInfo[] = [];
-  const vcardBlocks = text.split(/BEGIN:VCARD/i);
-
-  for (const block of vcardBlocks) {
-    if (!block.trim()) continue;
-    const nameMatch = block.match(/FN:(.*)/i);
-    const telMatch = block.match(/TEL[^:]*:(.*)/i);
-    const emailMatch = block.match(/EMAIL[^:]*:(.*)/i);
-    const orgMatch = block.match(/ORG:(.*)/i);
-
-    const name = nameMatch?.[1]?.trim() || '';
-    const phone = telMatch?.[1]?.trim() || '';
-    const email = emailMatch?.[1]?.trim() || undefined;
-    const organization = orgMatch?.[1]?.trim()?.replace(/^;+/, '') || undefined;
-
-    if (name || phone) {
-      contacts.push({
-        id: `imported-${contacts.length + 1}-${Date.now()}`,
-        name: name || 'Unknown',
-        phone: phone || 'No number',
-        email,
-        organization,
-      });
-    }
-  }
-  return contacts;
-}
-
 // ─── Color Utilities ────────────────────────────────────
 
 const AVATAR_COLORS = [
-  'bg-emerald-600',
-  'bg-teal-600',
-  'bg-cyan-600',
-  'bg-green-700',
-  'bg-lime-700',
-  'bg-emerald-700',
-  'bg-teal-700',
-  'bg-cyan-700',
-  'bg-green-600',
-  'bg-lime-600',
+  'bg-emerald-600', 'bg-teal-600', 'bg-cyan-600', 'bg-green-700',
+  'bg-lime-700', 'bg-emerald-700', 'bg-teal-700', 'bg-cyan-700',
+  'bg-green-600', 'bg-lime-600',
 ];
 
 function getAvatarColor(name: string): string {
@@ -119,167 +76,46 @@ function getInitials(name: string): string {
   return name.slice(0, 2).toUpperCase();
 }
 
-// ─── Detect if Contact Picker API is supported ──────────
-
-function isContactPickerSupported(): boolean {
-  return typeof navigator !== 'undefined' && 'contacts' in navigator && 'ContactsManager' in window;
-}
-
 // ─── Main App Component ─────────────────────────────────
 
-type View = 'welcome' | 'loading' | 'list' | 'detail';
+type View = 'permission' | 'loading' | 'list' | 'detail' | 'denied';
 
 export default function ContactCollector() {
   const { toast } = useToast();
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [view, setView] = useState<View>('welcome');
+  const [view, setView] = useState<View>('permission');
   const [contacts, setContacts] = useState<ContactInfo[]>([]);
-  const [contactSource, setContactSource] = useState<'phone' | 'file' | 'demo' | null>(null);
   const [selectedContact, setSelectedContact] = useState<ContactInfo | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copiedAll, setCopiedAll] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [dragOver, setDragOver] = useState(false);
-
-  const apiSupported = typeof window !== 'undefined' ? isContactPickerSupported() : false;
+  const [showVcardAll, setShowVcardAll] = useState(false);
 
   // ─── Request contacts from phone ────────────────────
 
-  const requestPhoneContacts = useCallback(async () => {
+  const requestContacts = useCallback(async () => {
     setView('loading');
-    setError(null);
 
-    if (isContactPickerSupported()) {
-      try {
-        const props = ['name', 'tel', 'email'] as unknown as ContactProperty[];
-        const selectedContacts = await (navigator as any).contacts.select(props, { multiple: true });
-        const mapped: ContactInfo[] = selectedContacts.map((c: any, i: number) => ({
-          id: `phone-${i + 1}`,
-          name: c.name?.[0] || 'Unknown',
-          phone: c.tel?.[0] || 'No number',
-          email: c.email?.[0] || undefined,
-          organization: undefined,
-        }));
-        setContacts(mapped);
-        setContactSource('phone');
-        setView('list');
-        toast({ title: 'Contacts loaded!', description: `${mapped.length} contacts from your phone` });
-      } catch (err: any) {
-        if (err.name === 'NotAllowedError') {
-          setError('Permission denied. Please allow contact access or try uploading a .vcf file instead.');
-        } else {
-          setError('Could not access contacts. Try uploading a .vcf file.');
-        }
-        setView('welcome');
-      }
-    } else {
-      setError('Contact Picker API not supported in this browser. Please use the vCard upload method.');
-      setView('welcome');
-    }
-  }, [toast]);
+    try {
+      const props = ['name', 'tel', 'email'] as unknown as ContactProperty[];
+      const selected = await (navigator as any).contacts.select(props, { multiple: true });
 
-  // ─── vCard file upload handler ──────────────────────
+      const mapped: ContactInfo[] = selected.map((c: any, i: number) => ({
+        id: `c-${i + 1}-${Date.now()}`,
+        name: c.name?.[0] || 'Unknown',
+        phone: c.tel?.[0] || 'No number',
+        email: c.email?.[0] || undefined,
+        organization: undefined,
+      }));
 
-  const handleFileUpload = useCallback(
-    (file: File) => {
-      if (!file.name.endsWith('.vcf') && !file.name.endsWith('.vcard') && !file.type.includes('text/vcard') && !file.type.includes('text/directory')) {
-        toast({ title: 'Invalid file', description: 'Please upload a .vcf file', variant: 'destructive' });
-        return;
-      }
-
-      setView('loading');
-      setError(null);
-
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const text = e.target?.result as string;
-        const parsed = parseVCardFile(text);
-        if (parsed.length === 0) {
-          setError('No contacts found in the file. Make sure it is a valid vCard file.');
-          setView('welcome');
-          return;
-        }
-        setContacts(parsed);
-        setContactSource('file');
-        setView('list');
-        toast({ title: 'Import successful!', description: `${parsed.length} contacts from ${file.name}` });
-      };
-      reader.onerror = () => {
-        setError('Failed to read the file. Please try again.');
-        setView('welcome');
-      };
-      reader.readAsText(file);
-    },
-    [toast]
-  );
-
-  const onFileChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) handleFileUpload(file);
-      // Reset input so same file can be re-uploaded
-      e.target.value = '';
-    },
-    [handleFileUpload]
-  );
-
-  const onDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      setDragOver(false);
-      const file = e.dataTransfer.files?.[0];
-      if (file) handleFileUpload(file);
-    },
-    [handleFileUpload]
-  );
-
-  const onDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(true);
-  }, []);
-
-  const onDragLeave = useCallback(() => {
-    setDragOver(false);
-  }, []);
-
-  // ─── Load demo contacts ─────────────────────────────
-
-  const loadDemo = useCallback(() => {
-    setView('loading');
-    setTimeout(() => {
-      const demos: ContactInfo[] = [
-        { id: 'd1', name: 'Rahim Uddin', phone: '+880 1711-234567', email: 'rahim@email.com', organization: 'ABC Corp' },
-        { id: 'd2', name: 'Karim Hasan', phone: '+880 1812-345678', email: 'karim@email.com', organization: 'XYZ Ltd' },
-        { id: 'd3', name: 'Fatima Begum', phone: '+880 1913-456789', organization: 'Tech Solutions' },
-        { id: 'd4', name: 'Nasir Ahmed', phone: '+880 1614-567890', email: 'nasir@email.com' },
-        { id: 'd5', name: 'Aisha Khan', phone: '+880 1515-678901', organization: 'Digital Ltd' },
-        { id: 'd6', name: 'Imran Hossain', phone: '+880 1716-789012', email: 'imran@email.com', organization: 'SoftDev' },
-        { id: 'd7', name: 'Salma Akter', phone: '+880 1817-890123', organization: 'Creative Hub' },
-        { id: 'd8', name: 'Jamil Rahman', phone: '+880 1918-901234', email: 'jamil@email.com' },
-        { id: 'd9', name: 'Nusrat Jahan', phone: '+880 1619-012345', organization: 'DataSys' },
-        { id: 'd10', name: 'Tariq Mahmud', phone: '+880 1520-123456', email: 'tariq@email.com', organization: 'CloudNet' },
-        { id: 'd11', name: 'Zainab Islam', phone: '+880 1721-234567', organization: 'MedTech' },
-        { id: 'd12', name: 'Habib Molla', phone: '+880 1822-345678', email: 'habib@email.com' },
-        { id: 'd13', name: 'Rashida Sultana', phone: '+880 1923-456789', organization: 'EduCare' },
-        { id: 'd14', name: 'Shafiqul Islam', phone: '+880 1624-567890', email: 'shafiq@email.com', organization: 'GreenTech' },
-        { id: 'd15', name: 'Momena Khatun', phone: '+880 1525-678901', organization: 'HealthPlus' },
-      ];
-      setContacts(demos);
-      setContactSource('demo');
+      setContacts(mapped);
       setView('list');
-    }, 800);
-  }, []);
-
-  // ─── Reset ──────────────────────────────────────────
-
-  const resetApp = useCallback(() => {
-    setContacts([]);
-    setContactSource(null);
-    setSelectedContact(null);
-    setSearchQuery('');
-    setError(null);
-    setView('welcome');
+    } catch (err: any) {
+      if (err.name === 'NotAllowedError') {
+        setView('denied');
+      } else {
+        setView('denied');
+      }
+    }
   }, []);
 
   // ─── Filtered contacts ──────────────────────────────
@@ -291,8 +127,7 @@ export default function ContactCollector() {
       (c) =>
         c.name.toLowerCase().includes(q) ||
         c.phone.toLowerCase().includes(q) ||
-        (c.email && c.email.toLowerCase().includes(q)) ||
-        (c.organization && c.organization.toLowerCase().includes(q))
+        (c.email && c.email.toLowerCase().includes(q))
     );
   }, [contacts, searchQuery]);
 
@@ -303,7 +138,7 @@ export default function ContactCollector() {
       const vcard = generateVCard(contact);
       await navigator.clipboard.writeText(vcard);
       setCopiedId(contact.id);
-      toast({ title: 'Copied!', description: `${contact.name}'s vCard copied to clipboard` });
+      toast({ title: 'Copied!', description: `${contact.name}'s vCard copied` });
       setTimeout(() => setCopiedId(null), 2000);
     },
     [toast]
@@ -313,7 +148,7 @@ export default function ContactCollector() {
     const vcard = generateAllVCard(contacts);
     await navigator.clipboard.writeText(vcard);
     setCopiedAll(true);
-    toast({ title: 'All Copied!', description: `${contacts.length} contacts vCard copied to clipboard` });
+    toast({ title: 'All Copied!', description: `${contacts.length} contacts vCard copied` });
     setTimeout(() => setCopiedAll(false), 2000);
   }, [contacts, toast]);
 
@@ -340,7 +175,7 @@ export default function ContactCollector() {
     a.download = 'all_contacts.vcf';
     a.click();
     URL.revokeObjectURL(url);
-    toast({ title: 'Downloaded!', description: `all_contacts.vcf with ${contacts.length} contacts saved` });
+    toast({ title: 'Downloaded!', description: `${contacts.length} contacts saved` });
   }, [contacts, toast]);
 
   // ─── Share handler ──────────────────────────────────
@@ -350,9 +185,7 @@ export default function ContactCollector() {
     if (navigator.share) {
       try {
         await navigator.share({ title: `${contact.name} - Contact`, text: vcard });
-      } catch {
-        // User cancelled
-      }
+      } catch { /* cancelled */ }
     } else {
       await copyVCard(contact);
     }
@@ -362,9 +195,9 @@ export default function ContactCollector() {
   //  RENDERS
   // ═══════════════════════════════════════════════════════
 
-  // ─── Welcome / Permission Screen ────────────────────
+  // ─── Permission Prompt (auto on open) ───────────────
 
-  if (view === 'welcome') {
+  if (view === 'permission') {
     return (
       <div className="min-h-screen flex flex-col bg-gradient-to-b from-[#075E54] to-[#054D44]">
         {/* Header */}
@@ -375,132 +208,35 @@ export default function ContactCollector() {
           <h1 className="text-white font-semibold text-lg">Contact Collector</h1>
         </div>
 
-        {/* Main content */}
-        <div className="flex-1 flex flex-col items-center justify-start px-5 pt-8 pb-12 overflow-y-auto">
-          {/* Icon circle */}
-          <div className="w-24 h-24 rounded-full bg-white/10 backdrop-blur-sm flex items-center justify-center mb-6 shadow-lg">
-            <div className="w-16 h-16 rounded-full bg-[#25D366] flex items-center justify-center">
-              <Phone className="w-8 h-8 text-white" />
+        <div className="flex-1 flex flex-col items-center justify-center px-6 pb-12">
+          <div className="w-28 h-28 rounded-full bg-white/10 flex items-center justify-center mb-8 shadow-lg">
+            <div className="w-20 h-20 rounded-full bg-[#25D366] flex items-center justify-center animate-pulse">
+              <Phone className="w-10 h-10 text-white" />
             </div>
           </div>
 
-          <h2 className="text-2xl font-bold text-white mb-2 text-center">Contact Collector</h2>
-          <p className="text-white/70 text-center mb-8 text-sm max-w-xs">
-            Import your contacts and manage them in vCard format. View, copy, download anytime.
+          <h2 className="text-2xl font-bold text-white mb-3 text-center">Contact Collector</h2>
+          <p className="text-white/70 text-center mb-2 text-base">
+            Your contacts in vCard format
+          </p>
+          <p className="text-white/50 text-center mb-10 text-sm max-w-xs">
+            Tap below to allow contact access and view all your phone contacts
           </p>
 
-          {/* ── Method 1: Phone Contact Picker ────────── */}
-          <div className="w-full max-w-sm bg-white/10 backdrop-blur-sm rounded-2xl p-5 mb-4">
-            <div className="flex items-start gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-[#25D366]/30 flex items-center justify-center shrink-0">
-                <Smartphone className="w-5 h-5 text-[#25D366]" />
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <h3 className="text-white font-semibold text-sm">From Phone</h3>
-                  {apiSupported ? (
-                    <Badge className="bg-[#25D366] text-white border-0 text-[10px] px-1.5 py-0">Supported</Badge>
-                  ) : (
-                    <Badge className="bg-yellow-500/30 text-yellow-200 border-0 text-[10px] px-1.5 py-0">
-                      Android Only
-                    </Badge>
-                  )}
-                </div>
-                <p className="text-white/50 text-xs leading-relaxed">
-                  {apiSupported
-                    ? 'Your browser supports Contact Picker. Tap to directly access your phone contacts.'
-                    : 'Contact Picker only works on Android Chrome. Use vCard upload instead.'}
-                </p>
-              </div>
-            </div>
-
+          {/* Permission button */}
+          <div className="w-full max-w-sm">
             <Button
-              onClick={requestPhoneContacts}
-              disabled={!apiSupported}
-              className="w-full bg-[#25D366] hover:bg-[#20BD5A] disabled:bg-white/10 disabled:text-white/30 text-white font-semibold h-11 rounded-xl text-sm"
+              onClick={requestContacts}
+              className="w-full bg-[#25D366] hover:bg-[#20BD5A] text-white font-bold h-14 rounded-2xl text-lg shadow-lg shadow-[#25D366]/30"
             >
-              <Phone className="w-4 h-4 mr-2" />
-              {apiSupported ? 'Allow Contact Access' : 'Not Available'}
+              <Phone className="w-6 h-6 mr-3" />
+              Allow Contact Access
             </Button>
+
+            <p className="text-white/40 text-center text-xs mt-4">
+              Your data stays on your device. Nothing is uploaded.
+            </p>
           </div>
-
-          {/* ── Method 2: Upload vCard File ────────────── */}
-          <div className="w-full max-w-sm bg-white/10 backdrop-blur-sm rounded-2xl p-5 mb-4">
-            <div className="flex items-start gap-3 mb-4">
-              <div className="w-10 h-10 rounded-full bg-[#25D366]/30 flex items-center justify-center shrink-0">
-                <Upload className="w-5 h-5 text-[#25D366]" />
-              </div>
-              <div className="flex-1">
-                <h3 className="text-white font-semibold text-sm mb-1">Upload vCard File</h3>
-                <p className="text-white/50 text-xs leading-relaxed">
-                  Export contacts from your phone as .vcf file, then upload here. Works on any device!
-                </p>
-              </div>
-            </div>
-
-            {/* Drop zone */}
-            <div
-              onDrop={onDrop}
-              onDragOver={onDragOver}
-              onDragLeave={onDragLeave}
-              onClick={() => fileInputRef.current?.click()}
-              className={`border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center cursor-pointer transition-all ${
-                dragOver
-                  ? 'border-[#25D366] bg-[#25D366]/10'
-                  : 'border-white/20 hover:border-white/40 hover:bg-white/5'
-              }`}
-            >
-              <Upload className="w-8 h-8 text-white/40 mb-2" />
-              <p className="text-white/70 text-sm font-medium mb-1">
-                {dragOver ? 'Drop your file here' : 'Tap to upload .vcf file'}
-              </p>
-              <p className="text-white/40 text-xs">or drag & drop</p>
-            </div>
-
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".vcf,.vcard"
-              onChange={onFileChange}
-              className="hidden"
-            />
-
-            {/* How to export hint */}
-            <div className="mt-3 bg-white/5 rounded-lg px-3 py-2">
-              <p className="text-white/40 text-[10px] leading-relaxed">
-                <span className="text-white/60 font-semibold">How to export:</span> Open your phone&apos;s Contacts app →
-                Settings → Export → Save as .vcf → Upload here
-              </p>
-            </div>
-          </div>
-
-          {/* ── Method 3: Demo ────────────────────────── */}
-          <div className="w-full max-w-sm flex items-center gap-3 mb-4">
-            <div className="flex-1 h-px bg-white/10" />
-            <span className="text-white/30 text-xs">or</span>
-            <div className="flex-1 h-px bg-white/10" />
-          </div>
-
-          <button
-            onClick={loadDemo}
-            className="text-white/40 hover:text-white/70 text-sm underline underline-offset-2 transition-colors"
-          >
-            Try with demo contacts
-          </button>
-
-          {/* Error message */}
-          {error && (
-            <div className="mt-4 w-full max-w-sm bg-red-500/20 border border-red-400/30 rounded-xl px-4 py-3 flex items-start gap-2">
-              <AlertCircle className="w-5 h-5 text-red-300 shrink-0 mt-0.5" />
-              <div>
-                <p className="text-red-200 text-xs font-medium">Error</p>
-                <p className="text-red-200/80 text-xs mt-0.5">{error}</p>
-              </div>
-              <button onClick={() => setError(null)} className="ml-auto shrink-0">
-                <X className="w-4 h-4 text-red-300" />
-              </button>
-            </div>
-          )}
         </div>
       </div>
     );
@@ -519,14 +255,39 @@ export default function ContactCollector() {
         </div>
         <div className="flex-1 flex flex-col items-center justify-center px-6">
           <div className="w-16 h-16 rounded-full border-4 border-white/20 border-t-[#25D366] animate-spin mb-6" />
-          <h3 className="text-white font-semibold text-lg mb-2">Loading Contacts...</h3>
-          <p className="text-white/60 text-sm text-center">
-            {contactSource === 'phone'
-              ? 'Reading contacts from your phone'
-              : contactSource === 'file'
-              ? 'Parsing vCard file'
-              : 'Preparing contacts...'}
+          <h3 className="text-white font-semibold text-lg mb-2">Reading Contacts...</h3>
+          <p className="text-white/60 text-sm text-center">Please allow contact permission if prompted</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Permission Denied Screen ───────────────────────
+
+  if (view === 'denied') {
+    return (
+      <div className="min-h-screen flex flex-col bg-gradient-to-b from-[#075E54] to-[#054D44]">
+        <div className="px-4 py-3 bg-[#075E54] flex items-center gap-3">
+          <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
+            <Users className="w-4 h-4 text-white" />
+          </div>
+          <h1 className="text-white font-semibold text-lg">Contact Collector</h1>
+        </div>
+        <div className="flex-1 flex flex-col items-center justify-center px-6">
+          <div className="w-20 h-20 rounded-full bg-red-500/20 flex items-center justify-center mb-6">
+            <AlertCircle className="w-10 h-10 text-red-400" />
+          </div>
+          <h3 className="text-white font-semibold text-lg mb-2 text-center">Permission Denied</h3>
+          <p className="text-white/60 text-sm text-center mb-8 max-w-xs">
+            Contact access was denied. Please allow permission to view your contacts.
           </p>
+          <Button
+            onClick={requestContacts}
+            className="bg-[#25D366] hover:bg-[#20BD5A] text-white font-semibold h-12 rounded-xl px-8"
+          >
+            <RefreshCw className="w-5 h-5 mr-2" />
+            Try Again
+          </Button>
         </div>
       </div>
     );
@@ -542,11 +303,8 @@ export default function ContactCollector() {
         {/* Detail header */}
         <div className="bg-[#075E54] px-4 py-3 flex items-center gap-3 shadow-md">
           <button
-            onClick={() => {
-              setView('list');
-              setSelectedContact(null);
-            }}
-            className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition-colors"
+            onClick={() => { setView('list'); setSelectedContact(null); }}
+            className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center"
           >
             <ArrowLeft className="w-5 h-5 text-white" />
           </button>
@@ -561,9 +319,8 @@ export default function ContactCollector() {
           </div>
         </div>
 
-        {/* Contact info card */}
         <div className="flex-1 px-4 py-6 space-y-4 overflow-y-auto">
-          {/* Avatar & name */}
+          {/* Profile card */}
           <div className="bg-white rounded-2xl p-6 shadow-sm">
             <div className="flex flex-col items-center mb-5">
               <Avatar className="w-20 h-20 mb-3">
@@ -572,9 +329,7 @@ export default function ContactCollector() {
                 </AvatarFallback>
               </Avatar>
               <h3 className="text-lg font-bold text-gray-900">{selectedContact.name}</h3>
-              {selectedContact.organization && (
-                <p className="text-sm text-gray-500">{selectedContact.organization}</p>
-              )}
+              {selectedContact.organization && <p className="text-sm text-gray-500">{selectedContact.organization}</p>}
             </div>
 
             <Separator className="my-4" />
@@ -602,19 +357,6 @@ export default function ContactCollector() {
                 </div>
               </div>
             )}
-
-            {/* Organization */}
-            {selectedContact.organization && (
-              <div className="flex items-center gap-3 py-2">
-                <div className="w-10 h-10 rounded-full bg-[#25D366]/10 flex items-center justify-center shrink-0">
-                  <Users className="w-5 h-5 text-[#25D366]" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-gray-500 mb-0.5">Organization</p>
-                  <p className="text-sm font-medium text-gray-900 truncate">{selectedContact.organization}</p>
-                </div>
-              </div>
-            )}
           </div>
 
           {/* vCard preview */}
@@ -632,25 +374,15 @@ export default function ContactCollector() {
 
           {/* Action buttons */}
           <div className="grid grid-cols-3 gap-3 pb-2">
-            <Button
-              onClick={() => copyVCard(selectedContact)}
-              className="bg-[#075E54] hover:bg-[#064E46] text-white h-14 rounded-xl flex-col gap-1 text-xs"
-            >
+            <Button onClick={() => copyVCard(selectedContact)} className="bg-[#075E54] hover:bg-[#064E46] text-white h-14 rounded-xl flex-col gap-1 text-xs">
               {copiedId === selectedContact.id ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
               {copiedId === selectedContact.id ? 'Copied' : 'Copy'}
             </Button>
-            <Button
-              onClick={() => downloadVCard(selectedContact)}
-              className="bg-[#25D366] hover:bg-[#20BD5A] text-white h-14 rounded-xl flex-col gap-1 text-xs"
-            >
+            <Button onClick={() => downloadVCard(selectedContact)} className="bg-[#25D366] hover:bg-[#20BD5A] text-white h-14 rounded-xl flex-col gap-1 text-xs">
               <Download className="w-5 h-5" />
               Download
             </Button>
-            <Button
-              onClick={() => shareVCard(selectedContact)}
-              variant="outline"
-              className="border-[#075E54] text-[#075E54] hover:bg-[#075E54]/10 h-14 rounded-xl flex-col gap-1 text-xs"
-            >
+            <Button onClick={() => shareVCard(selectedContact)} variant="outline" className="border-[#075E54] text-[#075E54] hover:bg-[#075E54]/10 h-14 rounded-xl flex-col gap-1 text-xs">
               <Share2 className="w-5 h-5" />
               Share
             </Button>
@@ -660,7 +392,7 @@ export default function ContactCollector() {
     );
   }
 
-  // ─── Contact List View ──────────────────────────────
+  // ─── Contact List View (MAIN) ───────────────────────
 
   return (
     <div className="min-h-screen flex flex-col bg-[#ECE5DD]">
@@ -671,38 +403,15 @@ export default function ContactCollector() {
         </div>
         <div className="flex-1 min-w-0">
           <h1 className="text-white font-semibold text-base">Contact Collector</h1>
-          <p className="text-white/70 text-xs">
-            {contacts.length} contacts
-            {contactSource === 'phone' && ' from phone'}
-            {contactSource === 'file' && ' from file'}
-            {contactSource === 'demo' && ' (demo)'}
-          </p>
+          <p className="text-white/70 text-xs">{contacts.length} contacts</p>
         </div>
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition-colors"
-            title="Import more contacts"
-          >
-            <Upload className="w-4 h-4 text-white/80" />
-          </button>
-          <button
-            onClick={resetApp}
-            className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition-colors"
-            title="Start over"
-          >
-            <RefreshCw className="w-4 h-4 text-white/80" />
-          </button>
-        </div>
-
-        {/* Hidden file input for importing more */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".vcf,.vcard"
-          onChange={onFileChange}
-          className="hidden"
-        />
+        <button
+          onClick={requestContacts}
+          className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center transition-colors"
+          title="Refresh contacts"
+        >
+          <RefreshCw className="w-4 h-4 text-white/80" />
+        </button>
       </div>
 
       {/* Search bar */}
@@ -723,35 +432,65 @@ export default function ContactCollector() {
         </div>
       </div>
 
-      {/* "My Contacted Numbers" section header */}
-      <div className="px-4 py-2.5 bg-[#ECE5DD]">
-        <div className="flex items-center gap-2">
-          <div className="w-1.5 h-5 rounded-full bg-[#25D366]" />
-          <h2 className="text-sm font-semibold text-[#075E54]">My Contacted Numbers</h2>
-          <span className="text-xs text-gray-500 ml-auto">{filteredContacts.length} found</span>
-        </div>
+      {/* "My Contacted Numbers" section - main button */}
+      <div className="px-3 py-2 bg-[#ECE5DD]">
+        <button
+          onClick={() => setShowVcardAll(!showVcardAll)}
+          className="w-full bg-[#075E54] hover:bg-[#064E46] text-white rounded-2xl px-5 py-4 flex items-center gap-3 shadow-md active:scale-[0.98] transition-transform"
+        >
+          <div className="w-11 h-11 rounded-full bg-[#25D366] flex items-center justify-center shrink-0">
+            <Phone className="w-5 h-5 text-white" />
+          </div>
+          <div className="flex-1 text-left min-w-0">
+            <h2 className="font-bold text-base">My Contacted Numbers</h2>
+            <p className="text-white/70 text-xs">{contacts.length} contacts in vCard format</p>
+          </div>
+          <Badge className="bg-[#25D366] text-white border-0 text-sm px-2.5 py-1 font-bold">
+            {contacts.length}
+          </Badge>
+        </button>
       </div>
 
-      {/* Action bar */}
-      <div className="px-4 py-2 bg-[#ECE5DD] flex gap-2">
-        <Button
-          onClick={copyAllVCard}
-          variant="outline"
-          size="sm"
-          className="flex-1 border-[#075E54]/30 text-[#075E54] hover:bg-[#075E54]/10 rounded-xl h-9 text-xs"
-        >
-          {copiedAll ? <Check className="w-3.5 h-3.5 mr-1" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
-          {copiedAll ? 'Copied All' : 'Copy All vCard'}
-        </Button>
-        <Button
-          onClick={downloadAllVCard}
-          size="sm"
-          className="flex-1 bg-[#25D366] hover:bg-[#20BD5A] text-white rounded-xl h-9 text-xs"
-        >
-          <Download className="w-3.5 h-3.5 mr-1" />
-          Download All
-        </Button>
-      </div>
+      {/* Expanded vCard all section */}
+      {showVcardAll && (
+        <div className="px-3 pb-2 bg-[#ECE5DD]">
+          <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+            <div className="px-4 py-3 bg-[#075E54] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4 text-white/80" />
+                <h4 className="text-white font-semibold text-sm">All Contacts vCard</h4>
+              </div>
+              <button onClick={() => setShowVcardAll(false)}>
+                <X className="w-4 h-4 text-white/60" />
+              </button>
+            </div>
+            <div className="p-4">
+              <pre className="text-[10px] text-gray-700 bg-gray-50 rounded-xl p-3 overflow-auto max-h-48 whitespace-pre-wrap font-mono leading-relaxed">
+                {generateAllVCard(contacts)}
+              </pre>
+            </div>
+            <div className="px-4 pb-4 flex gap-2">
+              <Button
+                onClick={copyAllVCard}
+                variant="outline"
+                size="sm"
+                className="flex-1 border-[#075E54]/30 text-[#075E54] hover:bg-[#075E54]/10 rounded-xl h-10 text-xs"
+              >
+                {copiedAll ? <Check className="w-3.5 h-3.5 mr-1" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
+                {copiedAll ? 'Copied All' : 'Copy All vCard'}
+              </Button>
+              <Button
+                onClick={downloadAllVCard}
+                size="sm"
+                className="flex-1 bg-[#25D366] hover:bg-[#20BD5A] text-white rounded-xl h-10 text-xs"
+              >
+                <Download className="w-3.5 h-3.5 mr-1" />
+                Download All .vcf
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Contact list */}
       <ScrollArea className="flex-1">
@@ -760,16 +499,12 @@ export default function ContactCollector() {
             <div className="py-12 text-center">
               <Users className="w-12 h-12 text-gray-300 mx-auto mb-3" />
               <p className="text-gray-500 text-sm">No contacts found</p>
-              <p className="text-gray-400 text-xs mt-1">Try a different search term</p>
             </div>
           ) : (
             filteredContacts.map((contact, index) => (
               <React.Fragment key={contact.id}>
                 <button
-                  onClick={() => {
-                    setSelectedContact(contact);
-                    setView('detail');
-                  }}
+                  onClick={() => { setSelectedContact(contact); setView('detail'); }}
                   className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#F0F0F0] transition-colors active:bg-[#E8E8E8]"
                 >
                   <Avatar className="w-11 h-11 shrink-0">
@@ -779,14 +514,7 @@ export default function ContactCollector() {
                   </Avatar>
 
                   <div className="flex-1 min-w-0 text-left">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-semibold text-gray-900 truncate">{contact.name}</h3>
-                      {contact.organization && (
-                        <span className="text-[10px] text-[#075E54] bg-[#075E54]/10 px-1.5 py-0.5 rounded-full truncate max-w-[100px]">
-                          {contact.organization}
-                        </span>
-                      )}
-                    </div>
+                    <h3 className="text-sm font-semibold text-gray-900 truncate">{contact.name}</h3>
                     <p className="text-xs text-gray-500 truncate mt-0.5">{contact.phone}</p>
                   </div>
 
@@ -802,18 +530,10 @@ export default function ContactCollector() {
       </ScrollArea>
 
       {/* Bottom bar */}
-      <div className="px-4 py-3 bg-white border-t border-gray-100 flex items-center justify-between">
-        <p className="text-xs text-gray-400">
-          Contact Collector &bull; vCard 3.0
+      <div className="px-4 py-3 bg-white border-t border-gray-100">
+        <p className="text-center text-xs text-gray-400">
+          Contact Collector &bull; {contacts.length} contacts &bull; vCard 3.0
         </p>
-        {contactSource === 'demo' && (
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="text-xs text-[#075E54] font-medium hover:underline"
-          >
-            Import real contacts
-          </button>
-        )}
       </div>
     </div>
   );
