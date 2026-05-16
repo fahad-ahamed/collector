@@ -54,6 +54,7 @@ interface SessionInfo {
   lastHeartbeat: string | null;
   buildId: string | null;
   isOnline: boolean;
+  deviceCount: number;
 }
 
 // ─── Step definitions ───────────────────────────────────
@@ -158,10 +159,8 @@ export default function CollectorHome() {
   const [building, setBuilding] = useState(false);
   const [buildProgress, setBuildProgress] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Fetch sessions from API (used by polling effect)
-  // Note: actual fetch is inlined in useEffect to avoid lint issue
 
   // Initial fetch and auto-poll every 10 seconds
   useEffect(() => {
@@ -199,6 +198,34 @@ export default function CollectorHome() {
     }
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
+  }, []);
+
+  // Delete session handler
+  const deleteSession = useCallback(async (id: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm('Delete this session and all its data? This cannot be undone.')) return;
+    setDeletingId(id);
+    try {
+      const res = await fetch('/api/sessions', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: id }),
+      });
+      if (res.ok) {
+        setSessions(prev => prev.filter(s => s.id !== id));
+        // Also remove from localStorage
+        try {
+          const stored = localStorage.getItem('contact_sessions');
+          if (stored) {
+            const local = JSON.parse(stored);
+            const filtered = local.filter((s: any) => s.id !== id);
+            localStorage.setItem('contact_sessions', JSON.stringify(filtered));
+          }
+        } catch {}
+      }
+    } catch {}
+    setDeletingId(null);
   }, []);
 
   // Handle logo file selection
@@ -437,8 +464,8 @@ export default function CollectorHome() {
                         <span className="text-gray-300">|</span>
                         <span>{session.fileCount || 0} files</span>
                         <span className="text-gray-300">|</span>
-                        <Clock className="w-3 h-3" />
-                        {timeAgo(session.createdAt)}
+                        <Smartphone className="w-3 h-3" />
+                        <span>{session.deviceCount || 0} device{(session.deviceCount || 0) !== 1 ? 's' : ''}</span>
                       </p>
                       {/* Mini step tracker */}
                       <MiniStepTracker status={session.status} />
@@ -457,11 +484,16 @@ export default function CollectorHome() {
                         )}
                       </button>
                       <button
-                        onClick={(e) => { e.preventDefault(); }}
+                        onClick={(e) => deleteSession(session.id, e)}
+                        disabled={deletingId === session.id}
                         className="w-8 h-8 rounded-full hover:bg-red-50 flex items-center justify-center transition-colors"
-                        title="Remove from history"
+                        title="Delete session"
                       >
-                        <Trash2 className="w-4 h-4 text-gray-400" />
+                        {deletingId === session.id ? (
+                          <Loader2 className="w-4 h-4 text-red-400 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-4 h-4 text-gray-400" />
+                        )}
                       </button>
                       <ChevronRight className="w-4 h-4 text-gray-300 shrink-0" />
                     </div>

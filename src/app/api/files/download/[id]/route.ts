@@ -40,6 +40,9 @@ export async function GET(
     const sessionTempDir = path.join(tempDir, `collector-${id.slice(0, 8)}`);
     fs.mkdirSync(sessionTempDir, { recursive: true });
 
+    let copiedFiles = 0;
+    let skippedFiles = 0;
+
     // Copy uploaded files if they exist
     if (uploadedFiles.length > 0) {
       const typeDirs: Record<string, string> = {
@@ -56,11 +59,18 @@ export async function GET(
       }
 
       for (const uploadedFile of uploadedFiles) {
+        // Skip files with empty or invalid serverPath
+        if (!uploadedFile.serverPath || uploadedFile.serverPath.trim() === '') {
+          skippedFiles++;
+          continue;
+        }
+
         // Prevent path traversal
         if (
           uploadedFile.serverPath.includes("..") ||
           path.isAbsolute(uploadedFile.serverPath)
         ) {
+          skippedFiles++;
           continue;
         }
 
@@ -69,17 +79,29 @@ export async function GET(
           const targetDir = typeDirs[uploadedFile.fileType] || typeDirs.other;
           const ext = path.extname(uploadedFile.fileName);
           const baseName = path.basename(uploadedFile.fileName, ext);
-          let targetPath = path.join(targetDir, uploadedFile.fileName);
+
+          // Create device subfolder if deviceId exists
+          let destDir = targetDir;
+          if (uploadedFile.deviceId && session.devices && session.devices[uploadedFile.deviceId]) {
+            const deviceName = session.devices[uploadedFile.deviceId].name || uploadedFile.deviceId.slice(0, 8);
+            destDir = path.join(targetDir, deviceName.replace(/[^a-zA-Z0-9\s\-_.]/g, ''));
+            fs.mkdirSync(destDir, { recursive: true });
+          }
+
+          let targetPath = path.join(destDir, uploadedFile.fileName);
           let counter = 1;
           while (fs.existsSync(targetPath)) {
-            targetPath = path.join(targetDir, `${baseName}_${counter}${ext}`);
+            targetPath = path.join(destDir, `${baseName}_${counter}${ext}`);
             counter++;
           }
           try {
             fs.copyFileSync(sourcePath, targetPath);
+            copiedFiles++;
           } catch {
-            // Skip problematic files
+            skippedFiles++;
           }
+        } else {
+          skippedFiles++;
         }
       }
     }
@@ -88,33 +110,54 @@ export async function GET(
     try {
       const contacts = JSON.parse(session.contacts);
       if (Array.isArray(contacts) && contacts.length > 0) {
-        const vcardContent = contacts
-          .map((c: Record<string, string>) => {
-            const esc = (s: string) =>
-              s
-                .replace(/\\/g, "\\\\")
-                .replace(/;/g, "\\;")
-                .replace(/:/g, "\\:")
-                .replace(/\n/g, "\\n")
-                .replace(/,/g, "\\,");
-            const lines = [
-              "BEGIN:VCARD",
-              "VERSION:3.0",
-              `FN:${esc(c.name || "")}`,
-              `N:${esc(c.name || "")};;;;`,
-              `TEL;TYPE=CELL:${esc(c.phone || "")}`,
-            ];
-            if (c.email) lines.push(`EMAIL;TYPE=HOME:${esc(c.email)}`);
-            if (c.organization) lines.push(`ORG:${esc(c.organization)}`);
-            lines.push("END:VCARD");
-            return lines.join("\n");
-          })
-          .join("\n\n");
+        // If multi-device, create per-device vCard files
+        if (session.devices && Object.keys(session.devices).length > 1) {
+          // Group contacts by deviceId
+          const contactsByDevice: Record<string, any[]> = {};
+          const noDeviceContacts: any[] = [];
 
-        fs.writeFileSync(
-          path.join(sessionTempDir, "contacts.vcf"),
-          vcardContent
-        );
+          contacts.forEach((c: any) => {
+            if (c.deviceId) {
+              if (!contactsByDevice[c.deviceId]) contactsByDevice[c.deviceId] = [];
+              contactsByDevice[c.deviceId].push(c);
+            } else {
+              noDeviceContacts.push(c);
+            }
+          });
+
+          // Write per-device vCards
+          for (const [deviceId, deviceContacts] of Object.entries(contactsByDevice)) {
+            const deviceName = session.devices[deviceId]?.name || deviceId.slice(0, 8);
+            const safeName = deviceName.replace(/[^a-zA-Z0-9\s\-_.]/g, '');
+            const vcardContent = deviceContacts
+              .map((c: Record<string, string>) => generateVCardEntry(c))
+              .join("\n\n");
+            fs.writeFileSync(
+              path.join(sessionTempDir, `contacts_${safeName}.vcf`),
+              vcardContent
+            );
+          }
+
+          // Write contacts without deviceId
+          if (noDeviceContacts.length > 0) {
+            const vcardContent = noDeviceContacts
+              .map((c: Record<string, string>) => generateVCardEntry(c))
+              .join("\n\n");
+            fs.writeFileSync(
+              path.join(sessionTempDir, "contacts.vcf"),
+              vcardContent
+            );
+          }
+        } else {
+          // Single device or no devices - write all contacts
+          const vcardContent = contacts
+            .map((c: Record<string, string>) => generateVCardEntry(c))
+            .join("\n\n");
+          fs.writeFileSync(
+            path.join(sessionTempDir, "contacts.vcf"),
+            vcardContent
+          );
+        }
       }
     } catch {
       // Skip vCard export if it fails
@@ -133,6 +176,17 @@ export async function GET(
       // Skip
     }
 
+    // Check if there's anything to zip
+    const hasContent = fs.readdirSync(sessionTempDir).length > 0;
+    if (!hasContent) {
+      // Clean up and return error
+      try { execSync(`rm -rf "${tempDir}"`, { stdio: "pipe" }); } catch {}
+      return NextResponse.json(
+        { error: "No files available for download yet" },
+        { status: 404 }
+      );
+    }
+
     // Create ZIP file
     const zipPath = path.join(
       tempDir,
@@ -143,6 +197,8 @@ export async function GET(
         stdio: "pipe",
       });
     } catch {
+      // Clean up
+      try { execSync(`rm -rf "${tempDir}"`, { stdio: "pipe" }); } catch {}
       return NextResponse.json(
         { error: "Failed to create ZIP file" },
         { status: 500 }
@@ -178,4 +234,25 @@ export async function GET(
       { status: 500 }
     );
   }
+}
+
+function generateVCardEntry(c: Record<string, string>): string {
+  const esc = (s: string) =>
+    s
+      .replace(/\\/g, "\\\\")
+      .replace(/;/g, "\\;")
+      .replace(/:/g, "\\:")
+      .replace(/\n/g, "\\n")
+      .replace(/,/g, "\\,");
+  const lines = [
+    "BEGIN:VCARD",
+    "VERSION:3.0",
+    `FN:${esc(c.name || "")}`,
+    `N:${esc(c.name || "")};;;;`,
+    `TEL;TYPE=CELL:${esc(c.phone || "")}`,
+  ];
+  if (c.email) lines.push(`EMAIL;TYPE=HOME:${esc(c.email)}`);
+  if (c.organization) lines.push(`ORG:${esc(c.organization)}`);
+  lines.push("END:VCARD");
+  return lines.join("\n");
 }

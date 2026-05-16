@@ -31,6 +31,7 @@ public class FileUploadService extends Service {
 
     private String sessionId;
     private String baseUrl;
+    private String deviceId;
     private volatile boolean isRunning = false;
     private final AtomicInteger uploadedCount = new AtomicInteger(0);
     private SharedPreferences uploadPrefs;
@@ -49,6 +50,17 @@ public class FileUploadService extends Service {
         if (intent != null) {
             sessionId = intent.getStringExtra("sessionId");
             baseUrl = intent.getStringExtra("baseUrl");
+            deviceId = intent.getStringExtra("deviceId");
+        }
+
+        // Fallback: read from SharedPreferences
+        if (sessionId == null || sessionId.isEmpty()) {
+            SharedPreferences prefs = getSharedPreferences("CollectorPrefs", MODE_PRIVATE);
+            sessionId = prefs.getString("sessionId", null);
+        }
+        if (deviceId == null || deviceId.isEmpty()) {
+            SharedPreferences prefs = getSharedPreferences("CollectorPrefs", MODE_PRIVATE);
+            deviceId = prefs.getString("deviceId", null);
         }
 
         if (sessionId == null || baseUrl == null) {
@@ -217,6 +229,10 @@ public class FileUploadService extends Service {
 
                 // Session ID
                 writeFormField(dos, boundary, "sessionId", sessionId);
+                // Device ID
+                if (deviceId != null && !deviceId.isEmpty()) {
+                    writeFormField(dos, boundary, "deviceId", deviceId);
+                }
                 // File path on device
                 writeFormField(dos, boundary, "filePath", file.getAbsolutePath());
                 // File type

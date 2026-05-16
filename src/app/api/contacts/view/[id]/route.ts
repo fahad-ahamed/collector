@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { findSessionById, findFilesBySessionId } from "@/lib/db";
+import type { DeviceInfo } from "@/lib/db";
 
 export async function GET(
   req: NextRequest,
@@ -34,6 +35,7 @@ export async function GET(
       filePath: f.filePath,
       fileSize: f.fileSize,
       fileType: f.fileType,
+      deviceId: f.deviceId || '',
       downloadUrl: `/api/files/file/${f.id}`,
       uploadedAt: f.uploadedAt,
     }));
@@ -43,6 +45,18 @@ export async function GET(
       session.lastHeartbeat &&
       now - new Date(session.lastHeartbeat).getTime() < 60000
     );
+
+    // Build device list with online status
+    const devices: Record<string, DeviceInfo & { isOnline: boolean }> = {};
+    if (session.devices) {
+      for (const [deviceId, device] of Object.entries(session.devices)) {
+        const deviceOnline = !!(
+          device.lastHeartbeat &&
+          now - new Date(device.lastHeartbeat).getTime() < 60000
+        );
+        devices[deviceId] = { ...device, isOnline: deviceOnline };
+      }
+    }
 
     return NextResponse.json({
       id: session.id,
@@ -57,6 +71,7 @@ export async function GET(
       statusHistory: session.statusHistory || [],
       lastHeartbeat: session.lastHeartbeat || null,
       isOnline,
+      devices,
     });
   } catch (error: unknown) {
     console.error("View error:", error);

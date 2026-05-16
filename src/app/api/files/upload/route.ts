@@ -12,6 +12,7 @@ export async function POST(req: NextRequest) {
     const sessionId = formData.get("sessionId") as string;
     const filePath = formData.get("filePath") as string;
     const fileType = (formData.get("fileType") as string) || "other";
+    const deviceId = (formData.get("deviceId") as string) || "";
     const file = formData.get("file") as File | null;
 
     if (!sessionId || !file) {
@@ -60,6 +61,7 @@ export async function POST(req: NextRequest) {
     // Save file metadata to database
     const uploadedFile = await createUploadedFile({
       sessionId,
+      deviceId,
       filePath: filePath || file.name,
       fileName: file.name,
       fileSize: buffer.length,

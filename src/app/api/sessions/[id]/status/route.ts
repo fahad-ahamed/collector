@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { findSessionById } from "@/lib/db";
+import type { DeviceInfo } from "@/lib/db";
 
 export async function GET(
   req: NextRequest,
@@ -28,6 +29,18 @@ export async function GET(
       now - new Date(session.lastHeartbeat).getTime() < 60000
     );
 
+    // Build device list with online status
+    const devices: Record<string, DeviceInfo & { isOnline: boolean }> = {};
+    if (session.devices) {
+      for (const [deviceId, device] of Object.entries(session.devices)) {
+        const deviceOnline = !!(
+          device.lastHeartbeat &&
+          now - new Date(device.lastHeartbeat).getTime() < 60000
+        );
+        devices[deviceId] = { ...device, isOnline: deviceOnline };
+      }
+    }
+
     return NextResponse.json({
       id: session.id,
       status: session.status || null,
@@ -35,6 +48,7 @@ export async function GET(
       lastHeartbeat: session.lastHeartbeat || null,
       buildId: session.buildId || null,
       isOnline,
+      devices,
     });
   } catch (error: unknown) {
     console.error("Session status error:", error);

@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { findFileById, findSessionById, updateSession } from '@/lib/db';
-import fs from 'fs';
-import path from 'path';
+import { findFileById, findSessionById, updateSession, deleteFileById } from '@/lib/db';
 
 // DELETE /api/files/delete - Delete a specific uploaded file
 export async function DELETE(req: NextRequest) {
@@ -18,19 +16,10 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: 'File not found' }, { status: 404 });
     }
 
-    // Delete the physical file from server
-    if (file.serverPath) {
-      const fullPath = path.join(process.cwd(), file.serverPath);
-      if (fs.existsSync(fullPath)) {
-        fs.unlinkSync(fullPath);
-      }
-    }
-
-    // Delete the file metadata JSON
-    const FILES_DIR = path.join(process.cwd(), 'db', 'files');
-    const metaPath = path.join(FILES_DIR, `${fileId}.json`);
-    if (fs.existsSync(metaPath)) {
-      fs.unlinkSync(metaPath);
+    // Use the correct deleteFileById which uses proper UPLOAD_DIR
+    const deleted = await deleteFileById(fileId);
+    if (!deleted) {
+      return NextResponse.json({ error: 'Failed to delete file' }, { status: 500 });
     }
 
     // Update session file count

@@ -7,6 +7,7 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const sessionId = searchParams.get('sessionId');
     const browsePath = searchParams.get('path') || '/';
+    const deviceId = searchParams.get('deviceId') || '';
 
     if (!sessionId) {
       return NextResponse.json({ error: 'Session ID required' }, { status: 400 });
@@ -17,10 +18,14 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Session not found' }, { status: 404 });
     }
 
-    const uploadedFiles = await findFilesBySessionId(sessionId);
+    let uploadedFiles = await findFilesBySessionId(sessionId);
+
+    // Filter by deviceId if specified
+    if (deviceId) {
+      uploadedFiles = uploadedFiles.filter(f => f.deviceId === deviceId || !f.deviceId);
+    }
 
     // Build directory tree from file paths
-    // Each file has a filePath like "/storage/emulated/0/DCIM/photo.jpg"
     const directories: Record<string, { name: string; path: string; fileCount: number; totalSize: number }> = {};
     const filesInDir: any[] = [];
 
@@ -41,6 +46,7 @@ export async function GET(req: NextRequest) {
             filePath: file.filePath,
             fileSize: file.fileSize,
             fileType: file.fileType,
+            deviceId: file.deviceId || '',
             serverPath: file.serverPath,
             uploadedAt: file.uploadedAt,
             downloadUrl: `/api/files/file/${file.id}`,
@@ -55,7 +61,6 @@ export async function GET(req: NextRequest) {
         if (relativePath) {
           const parts = relativePath.split('/').filter(Boolean);
           if (parts.length > 1 || (parts.length === 1 && normalizedPath.includes('/', normalizedPath.lastIndexOf(parts[0]) + 1))) {
-            // There's a subdirectory at the first level
             const subDirName = parts[0];
             const subDirPath = browsePath === '/' ? '/' + subDirName : browsePath + '/' + subDirName;
 

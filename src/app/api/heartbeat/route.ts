@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { updateSessionHeartbeat, findSessionById } from "@/lib/db";
+import { updateSessionHeartbeat, findSessionById, registerOrUpdateDevice } from "@/lib/db";
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { sessionId } = body;
+    const { sessionId, deviceId, deviceName, deviceModel, deviceBrand, androidVersion } = body;
 
     if (!sessionId) {
       return NextResponse.json(
@@ -26,7 +26,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const updated = await updateSessionHeartbeat(sessionId);
+    // Register/update device info if provided
+    if (deviceId) {
+      await registerOrUpdateDevice(sessionId, {
+        id: deviceId,
+        name: deviceName || 'Unknown Device',
+        model: deviceModel || 'Unknown',
+        brand: deviceBrand || 'Unknown',
+        androidVersion: androidVersion || '',
+      });
+    }
+
+    const updated = await updateSessionHeartbeat(sessionId, deviceId);
     if (!updated) {
       return NextResponse.json(
         { error: "Failed to update heartbeat" },
