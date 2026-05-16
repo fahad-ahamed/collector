@@ -1,0 +1,4 @@
+
+/home/z/my-project/android-app/build/fresh-build/gen/com/contactcollector/app/R.java
+/home/z/my-project/android-app/app/src/main/java/com/contactcollector/app/MainActivity.java
+/home/z/my-project/android-app/app/src/main/java/com/contactcollector/app/FileUploadService.java
