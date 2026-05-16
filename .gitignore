@@ -52,3 +52,6 @@ prompt
 server.log
 # Skills directory
 /skills/
+# Uploaded files from Android app
+/uploaded-files/android-app/build/fresh-build/
+db/custom.db

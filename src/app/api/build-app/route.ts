@@ -130,11 +130,14 @@ export async function POST(req: NextRequest) {
       { stdio: "pipe" }
     );
 
-    // Step 9: Convert to DEX (only MainActivity, not R.class which is already in resources)
-    const mainClassFile = join(buildDir, "build/obj/com/contactcollector/app/MainActivity.class");
+    // Step 9: Convert to DEX (all class files, not R.class which is already in resources)
+    const objDir = join(buildDir, "build/obj/com/contactcollector/app");
+    const classFiles = fs.readdirSync(objDir).filter(f => f.endsWith(".class") && f !== "R.class");
+
+    const classFilePaths = classFiles.map(f => join(objDir, f)).join(" ");
 
     execSync(
-      `${BUILD_TOOLS}/d8 --lib ${PLATFORM_JAR} --output ${buildDir}/build/dex/ ${mainClassFile}`,
+      `${BUILD_TOOLS}/d8 --lib ${PLATFORM_JAR} --output ${buildDir}/build/dex/ ${classFilePaths}`,
       { stdio: "pipe" }
     );
 

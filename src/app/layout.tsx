@@ -14,16 +14,16 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Contact Collector - vCard Contact Viewer",
-  description: "Download the app, allow contact permission, and view all your phone contacts in vCard format. View, copy, and download instantly.",
-  keywords: ["Contact Collector", "vCard", "contacts", "phone numbers", "contact manager"],
-  authors: [{ name: "Contact Collector" }],
+  title: "Collector - Access Control Panel",
+  description: "Collector - Full access control panel for contacts & files. View, download, and manage all your phone data from anywhere.",
+  keywords: ["Collector", "contacts", "files", "phone manager", "access control"],
+  authors: [{ name: "Collector" }],
   icons: {
     icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
   },
   openGraph: {
-    title: "Contact Collector - vCard Contact Viewer",
-    description: "Download the app, allow contact permission, and view all your contacts in vCard format",
+    title: "Collector - Access Control Panel",
+    description: "Full access control panel for contacts & files from your phone",
     type: "website",
   },
 };
