@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { db } from "@/lib/db";
 
 export async function POST(req: NextRequest) {
   try {
@@ -17,7 +15,7 @@ export async function POST(req: NextRequest) {
 
     const filesArray = Array.isArray(files) ? files : [];
 
-    const session = await prisma.contactSession.create({
+    const session = await db.contactSession.create({
       data: {
         contacts: JSON.stringify(contacts),
         files: JSON.stringify(filesArray),

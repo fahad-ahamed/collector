@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
+import { db } from "@/lib/db";
 import fs from "fs";
 import path from "path";
 
-const prisma = new PrismaClient();
 const UPLOAD_DIR = process.env.UPLOAD_DIR || "/tmp/collector-uploads";
 
 // Map file extensions to content types
@@ -37,7 +36,7 @@ export async function GET(
   try {
     const { fileId } = await params;
 
-    const uploadedFile = await prisma.uploadedFile.findUnique({
+    const uploadedFile = await db.uploadedFile.findUnique({
       where: { id: fileId },
     });
 

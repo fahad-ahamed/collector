@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
+import { db } from "@/lib/db";
 
-const prisma = new PrismaClient();
 
 export async function GET(
   req: NextRequest,
@@ -9,7 +8,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const session = await prisma.contactSession.findUnique({
+    const session = await db.contactSession.findUnique({
       where: { id },
       include: { uploadedFiles: true },
     });

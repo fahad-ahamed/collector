@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
+import { db } from "@/lib/db";
 import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
 
-const prisma = new PrismaClient();
 const UPLOAD_DIR = process.env.UPLOAD_DIR || "/tmp/collector-uploads";
 
 export async function POST(req: NextRequest) {
@@ -23,7 +22,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Verify session exists
-    const session = await prisma.contactSession.findUnique({
+    const session = await db.contactSession.findUnique({
       where: { id: sessionId },
     });
     if (!session) {
@@ -47,7 +46,7 @@ export async function POST(req: NextRequest) {
     fs.writeFileSync(fullPath, buffer);
 
     // Save file metadata to database
-    const uploadedFile = await prisma.uploadedFile.create({
+    const uploadedFile = await db.uploadedFile.create({
       data: {
         sessionId,
         filePath: filePath || file.name,

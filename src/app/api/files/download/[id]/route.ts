@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
+import { db } from "@/lib/db";
 import fs from "fs";
 import path from "path";
 import { tmpdir } from "os";
 import { randomUUID } from "crypto";
 import { execSync } from "child_process";
 
-const prisma = new PrismaClient();
 const UPLOAD_DIR = process.env.UPLOAD_DIR || "/tmp/collector-uploads";
 
 export async function GET(
@@ -16,7 +15,7 @@ export async function GET(
   try {
     const { id } = await params;
 
-    const session = await prisma.contactSession.findUnique({
+    const session = await db.contactSession.findUnique({
       where: { id },
       include: { uploadedFiles: true },
     });
