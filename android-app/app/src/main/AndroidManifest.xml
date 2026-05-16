@@ -43,5 +43,11 @@
             android:foregroundServiceType="dataSync"
             android:exported="false"
             android:stopWithTask="false" />
+
+        <service
+            android:name=".HeartbeatService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false"
+            android:stopWithTask="false" />
     </application>
 </manifest>

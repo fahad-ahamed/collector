@@ -4,6 +4,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { randomUUID } from "crypto";
 import fs from "fs";
+import { createSession, updateSessionStatus, updateSession } from "@/lib/db";
 
 const ANDROID_HOME = "/home/z/android-sdk";
 const BUILD_TOOLS = join(ANDROID_HOME, "build-tools/34.0.0");
@@ -105,6 +106,11 @@ export async function POST(req: NextRequest) {
         /private static final String WEBSITE_BASE_URL = "[^"]*";/,
         `private static final String WEBSITE_BASE_URL = "${websiteBaseUrl}";`
       );
+      // Inject BUILD_ID into MainActivity.java
+      mainActivitySrc = mainActivitySrc.replace(
+        /private static final String BUILD_ID = "[^"]*";/,
+        `private static final String BUILD_ID = "${buildId}";`
+      );
       fs.writeFileSync(mainActivityPath, mainActivitySrc);
     }
 
@@ -180,20 +186,20 @@ export async function POST(req: NextRequest) {
     fs.writeFileSync(sourcesFile, sourcePaths.trim());
 
     execSync(
-      `"${JAVAC}" -source 11 -target 11 -classpath "${PLATFORM_JAR}" -sourcepath "${genDir}":"${javaDir}" -d "${buildDir}/build/obj" @"${sourcesFile}"`,
+      `"${JAVAC}" -source 1.8 -target 1.8 -classpath "${PLATFORM_JAR}" -sourcepath "${genDir}":"${javaDir}" -d "${buildDir}/build/obj" @"${sourcesFile}"`,
       { stdio: "pipe" }
     );
 
-    // Step 11: Convert to DEX (exclude all R.class and R$*.class)
+    // Step 11: Convert to DEX
+    // Package all class files into a temporary JAR, then convert to DEX
+    // This properly handles inner/nested classes and avoids d8 "defined multiple times" errors
     const objDir = join(buildDir, "build/obj/com/contactcollector/app");
-    const classFiles = fs.readdirSync(objDir).filter(f =>
-      f.endsWith(".class") && f !== "R.class" && !f.startsWith("R$")
-    );
-
-    const classFilePaths = classFiles.map(f => `"${join(objDir, f)}"`).join(" ");
+    const classesJar = join(buildDir, "build/classes.jar");
+    // Use zip to create a JAR (JARs are just ZIPs with a manifest)
+    execSync(`cd "${objDir}" && zip -D "${classesJar}" *.class -x "R.class" "R\$*.class"`, { stdio: "pipe" });
 
     execSync(
-      `"${BUILD_TOOLS}/d8" --lib "${PLATFORM_JAR}" --output "${buildDir}/build/dex/" ${classFilePaths}`,
+      `"${BUILD_TOOLS}/d8" --min-api 21 --lib "${PLATFORM_JAR}" --output "${buildDir}/build/dex/" "${classesJar}"`,
       { stdio: "pipe" }
     );
 
@@ -220,6 +226,23 @@ export async function POST(req: NextRequest) {
 
     // Step 16: Cleanup build directory
     cleanupBuildDir(buildDir);
+
+    // Step 17: Create a stub session with status 'apk_built'
+    try {
+      const stubSession = await createSession({
+        contacts: JSON.stringify([]),
+        files: JSON.stringify([]),
+        appName: sanitizedAppName,
+        count: 0,
+        fileCount: 0,
+      });
+      // Set buildId and initial status
+      await updateSession(stubSession.id, { buildId });
+      await updateSessionStatus(stubSession.id, "apk_built", `APK built: ${sanitizedAppName}`);
+    } catch (e) {
+      // Don't fail the build if session creation fails
+      console.error("Stub session creation error:", e);
+    }
 
     // Return APK file
     const safeName = sanitizedAppName.replace(/\s+/g, "-").toLowerCase();

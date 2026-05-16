@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { findSessionById, findFilesBySessionId } from "@/lib/db";
+import { findSessionById } from "@/lib/db";
 
 export async function GET(
   req: NextRequest,
@@ -22,22 +22,6 @@ export async function GET(
       );
     }
 
-    const uploadedFiles = await findFilesBySessionId(id);
-
-    const contacts = JSON.parse(session.contacts);
-    const files = JSON.parse(session.files);
-
-    // Map uploaded files with their download URLs
-    const mappedUploadedFiles = uploadedFiles.map((f) => ({
-      id: f.id,
-      fileName: f.fileName,
-      filePath: f.filePath,
-      fileSize: f.fileSize,
-      fileType: f.fileType,
-      downloadUrl: `/api/files/file/${f.id}`,
-      uploadedAt: f.uploadedAt,
-    }));
-
     const now = Date.now();
     const isOnline = !!(
       session.lastHeartbeat &&
@@ -46,22 +30,16 @@ export async function GET(
 
     return NextResponse.json({
       id: session.id,
-      contacts,
-      files,
-      uploadedFiles: mappedUploadedFiles,
-      appName: session.appName,
-      count: session.count,
-      fileCount: session.fileCount,
-      createdAt: session.createdAt,
       status: session.status || null,
       statusHistory: session.statusHistory || [],
       lastHeartbeat: session.lastHeartbeat || null,
+      buildId: session.buildId || null,
       isOnline,
     });
   } catch (error: unknown) {
-    console.error("View error:", error);
+    console.error("Session status error:", error);
     return NextResponse.json(
-      { error: "Failed to retrieve data" },
+      { error: "Failed to retrieve session status" },
       { status: 500 }
     );
   }

