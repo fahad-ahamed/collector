@@ -1,0 +1,3 @@
+#!/bin/sh
+# Gradle wrapper stub - we'll use system gradle or direct build
+echo "Using direct Android SDK build approach..."

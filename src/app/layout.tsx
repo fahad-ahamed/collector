@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
-import AuthProvider from "@/components/auth-provider";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -16,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Contact Collector - vCard Contact Viewer",
-  description: "Allow contact access and view all your phone contacts in vCard format. View, copy, and download instantly.",
+  description: "Download the app, allow contact permission, and view all your phone contacts in vCard format. View, copy, and download instantly.",
   keywords: ["Contact Collector", "vCard", "contacts", "phone numbers", "contact manager"],
   authors: [{ name: "Contact Collector" }],
   icons: {
@@ -24,13 +23,8 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "Contact Collector - vCard Contact Viewer",
-    description: "Allow contact access and view all your contacts in vCard format",
+    description: "Download the app, allow contact permission, and view all your contacts in vCard format",
     type: "website",
-  },
-  twitter: {
-    card: "summary_large_image",
-    title: "Contact Collector",
-    description: "Allow contact access and view all your contacts in vCard format",
   },
 };
 
@@ -44,9 +38,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
-        <AuthProvider>
-          {children}
-        </AuthProvider>
+        {children}
         <Toaster />
       </body>
     </html>

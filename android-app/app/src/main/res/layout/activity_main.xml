@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#075E54"
+    android:gravity="center"
+    android:padding="32dp">
+
+    <!-- App Icon -->
+    <LinearLayout
+        android:layout_width="96dp"
+        android:layout_height="96dp"
+        android:gravity="center"
+        android:background="@drawable/circle_bg"
+        android:layout_marginBottom="24dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="📱"
+            android:textSize="40sp" />
+    </LinearLayout>
+
+    <!-- App Name -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Contact Collector"
+        android:textColor="#FFFFFF"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="8dp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Read contacts &amp; view on website"
+        android:textColor="#FFFFFFAA"
+        android:textSize="14sp"
+        android:layout_marginBottom="40dp" />
+
+    <!-- Permission Screen -->
+    <LinearLayout
+        android:id="@+id/layoutPermission"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:visibility="visible">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Allow Contact Access"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Tap the button below to allow contact permission.\nAll contacts will be read automatically — no selection needed!"
+            android:textColor="#FFFFFF99"
+            android:textSize="13sp"
+            android:gravity="center"
+            android:layout_marginBottom="32dp" />
+
+        <Button
+            android:id="@+id/btnAllow"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:text="Allow Contact Access"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="#075E54"
+            android:backgroundTint="#25D366"
+            android:layout_marginBottom="16dp" />
+    </LinearLayout>
+
+    <!-- Loading Screen -->
+    <LinearLayout
+        android:id="@+id/layoutLoading"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:visibility="gone">
+
+        <ProgressBar
+            android:id="@+id/progressBar"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:indeterminateTint="#25D366"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:id="@+id/tvStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Reading Contacts..."
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:id="@+id/tvDetail"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Please wait while we read all your contacts"
+            android:textColor="#FFFFFF99"
+            android:textSize="13sp"
+            android:gravity="center" />
+    </LinearLayout>
+
+    <!-- Success Screen -->
+    <LinearLayout
+        android:id="@+id/layoutSuccess"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="✓"
+            android:textSize="48sp"
+            android:textColor="#25D366"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:id="@+id/tvStatus2"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Contacts Uploaded!"
+            android:textColor="#25D366"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:id="@+id/tvDetail2"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Your contacts have been sent to the website."
+            android:textColor="#FFFFFF99"
+            android:textSize="13sp"
+            android:gravity="center"
+            android:layout_marginBottom="24dp" />
+
+        <Button
+            android:id="@+id/btnViewWebsite"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:text="View on Website"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="#075E54"
+            android:backgroundTint="#25D366"
+            android:visibility="gone" />
+    </LinearLayout>
+
+</LinearLayout>
