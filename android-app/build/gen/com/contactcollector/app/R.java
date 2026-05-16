@@ -26,10 +26,11 @@ public final class R {
     public static final int layoutPermission=0x7f030003;
     public static final int layoutSuccess=0x7f030004;
     public static final int progressBar=0x7f030005;
-    public static final int tvDetail=0x7f030006;
-    public static final int tvDetail2=0x7f030007;
-    public static final int tvStatus=0x7f030008;
-    public static final int tvStatus2=0x7f030009;
+    public static final int tvAppName=0x7f030006;
+    public static final int tvDetail=0x7f030007;
+    public static final int tvDetail2=0x7f030008;
+    public static final int tvStatus=0x7f030009;
+    public static final int tvStatus2=0x7f03000a;
   }
   public static final class layout {
     public static final int activity_main=0x7f040000;

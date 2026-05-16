@@ -6,7 +6,7 @@ const prisma = new PrismaClient();
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { contacts } = body;
+    const { contacts, files, appName } = body;
 
     if (!contacts || !Array.isArray(contacts)) {
       return NextResponse.json(
@@ -15,23 +15,28 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Store contacts as JSON
+    const filesArray = Array.isArray(files) ? files : [];
+
     const session = await prisma.contactSession.create({
       data: {
         contacts: JSON.stringify(contacts),
+        files: JSON.stringify(filesArray),
+        appName: appName || "Contact Collector",
         count: contacts.length,
+        fileCount: filesArray.length,
       },
     });
 
     return NextResponse.json({
       id: session.id,
-      count: session.count,
+      contactCount: session.count,
+      fileCount: session.fileCount,
       viewUrl: `/view/${session.id}`,
     });
   } catch (error: any) {
     console.error("Upload error:", error);
     return NextResponse.json(
-      { error: "Failed to store contacts" },
+      { error: "Failed to store data" },
       { status: 500 }
     );
   }

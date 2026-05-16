@@ -21,17 +21,21 @@ export async function GET(
     }
 
     const contacts = JSON.parse(session.contacts);
+    const files = JSON.parse(session.files);
 
     return NextResponse.json({
       id: session.id,
       contacts,
+      files,
+      appName: session.appName,
       count: session.count,
+      fileCount: session.fileCount,
       createdAt: session.createdAt,
     });
   } catch (error: any) {
     console.error("View error:", error);
     return NextResponse.json(
-      { error: "Failed to retrieve contacts" },
+      { error: "Failed to retrieve data" },
       { status: 500 }
     );
   }

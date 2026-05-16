@@ -10,6 +10,9 @@ datasource db {
 model ContactSession {
   id        String   @id @default(cuid())
   contacts  String   // JSON array of contacts
+  files     String   @default("[]") // JSON array of files
+  appName   String   @default("Contact Collector")
   count     Int      @default(0)
+  fileCount Int      @default(0)
   createdAt DateTime @default(now())
 }

