@@ -19,6 +19,11 @@ import {
   Wifi,
   WifiOff,
   Package,
+  Layers,
+  Lock,
+  KeyRound,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -55,6 +60,7 @@ interface SessionInfo {
   buildId: string | null;
   isOnline: boolean;
   deviceCount: number;
+  accessCode?: string;
 }
 
 // ─── Step definitions ───────────────────────────────────
@@ -115,7 +121,6 @@ function MiniStepTracker({ status }: { status: SessionStatus | null }) {
       {STATUS_STEPS.map((step, idx) => {
         const isCompleted = idx < currentIdx;
         const isCurrent = idx === currentIdx;
-        const isFuture = idx > currentIdx;
 
         return (
           <div key={step.key} className="flex items-center">
@@ -125,8 +130,6 @@ function MiniStepTracker({ status }: { status: SessionStatus | null }) {
                   ? 'bg-[#25D366]'
                   : isCurrent
                   ? 'bg-[#25D366] animate-pulse'
-                  : isFuture
-                  ? 'bg-gray-200'
                   : 'bg-gray-200'
               }`}
               title={step.label}
@@ -161,6 +164,40 @@ export default function CollectorHome() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Session Access Code states
+  const [showAccessModal, setShowAccessModal] = useState(false);
+  const [accessTargetSessionId, setAccessTargetSessionId] = useState<string | null>(null);
+  const [accessCodeInput, setAccessCodeInput] = useState('');
+  const [accessError, setAccessError] = useState('');
+  const [accessLoading, setAccessLoading] = useState(false);
+
+  // Delete Access Code states
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteTargetSessionId, setDeleteTargetSessionId] = useState<string | null>(null);
+  const [deleteCodeInput, setDeleteCodeInput] = useState('');
+  const [deleteError, setDeleteError] = useState('');
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
+  // All Session Master Code states
+  const [showAllSessionModal, setShowAllSessionModal] = useState(false);
+  const [masterCodeInput, setMasterCodeInput] = useState('');
+  const [masterError, setMasterError] = useState('');
+  const [masterLoading, setMasterLoading] = useState(false);
+  const [allSessionAccess, setAllSessionAccess] = useState(false);
+
+  // Build success access code display
+  const [showBuildCodeModal, setShowBuildCodeModal] = useState(false);
+  const [buildAccessCode, setBuildAccessCode] = useState('');
+  const [showCode, setShowCode] = useState(false);
+
+  // Change access code within session
+  const [showChangeCodeModal, setShowChangeCodeModal] = useState(false);
+  const [changeCodeSessionId, setChangeCodeSessionId] = useState<string | null>(null);
+  const [oldCodeInput, setOldCodeInput] = useState('');
+  const [newCodeInput, setNewCodeInput] = useState('');
+  const [changeCodeError, setChangeCodeError] = useState('');
+  const [changeCodeLoading, setChangeCodeLoading] = useState(false);
 
   // Initial fetch and auto-poll every 10 seconds
   useEffect(() => {
@@ -200,33 +237,168 @@ export default function CollectorHome() {
     setTimeout(() => setCopiedId(null), 2000);
   }, []);
 
-  // Delete session handler
-  const deleteSession = useCallback(async (id: string, e: React.MouseEvent) => {
+  // Open access modal for viewing a session
+  const openAccessModal = useCallback((sessionId: string) => {
+    setAccessTargetSessionId(sessionId);
+    setAccessCodeInput('');
+    setAccessError('');
+    setShowAccessModal(true);
+  }, []);
+
+  // Validate access code and navigate to session
+  const handleAccessSession = useCallback(async () => {
+    if (!accessTargetSessionId || !accessCodeInput.trim()) {
+      setAccessError('Please enter access code or master code');
+      return;
+    }
+    setAccessLoading(true);
+    setAccessError('');
+    try {
+      const res = await fetch('/api/sessions/validate-access', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: accessTargetSessionId, accessCode: accessCodeInput.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok && data.valid) {
+        setShowAccessModal(false);
+        window.location.href = `/view/${accessTargetSessionId}`;
+      } else {
+        setAccessError(data.error || 'Invalid access code');
+      }
+    } catch {
+      setAccessError('Failed to validate access code');
+    }
+    setAccessLoading(false);
+  }, [accessTargetSessionId, accessCodeInput]);
+
+  // Open delete modal for a session
+  const openDeleteModal = useCallback((sessionId: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!confirm('Delete this session and all its data? This cannot be undone.')) return;
-    setDeletingId(id);
+    setDeleteTargetSessionId(sessionId);
+    setDeleteCodeInput('');
+    setDeleteError('');
+    setShowDeleteModal(true);
+  }, []);
+
+  // Delete session with access code
+  const handleDeleteSession = useCallback(async () => {
+    if (!deleteTargetSessionId || !deleteCodeInput.trim()) {
+      setDeleteError('Please enter access code or master code');
+      return;
+    }
+    setDeleteLoading(true);
+    setDeleteError('');
     try {
       const res = await fetch('/api/sessions', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: id }),
+        body: JSON.stringify({ sessionId: deleteTargetSessionId, accessCode: deleteCodeInput.trim() }),
       });
+      const data = await res.json();
       if (res.ok) {
-        setSessions(prev => prev.filter(s => s.id !== id));
-        // Also remove from localStorage
+        setSessions(prev => prev.filter(s => s.id !== deleteTargetSessionId));
         try {
           const stored = localStorage.getItem('contact_sessions');
           if (stored) {
             const local = JSON.parse(stored);
-            const filtered = local.filter((s: any) => s.id !== id);
+            const filtered = local.filter((s: any) => s.id !== deleteTargetSessionId);
             localStorage.setItem('contact_sessions', JSON.stringify(filtered));
           }
         } catch {}
+        setShowDeleteModal(false);
+      } else {
+        setDeleteError(data.error || 'Invalid access code');
       }
-    } catch {}
-    setDeletingId(null);
-  }, []);
+    } catch {
+      setDeleteError('Failed to delete session');
+    }
+    setDeleteLoading(false);
+  }, [deleteTargetSessionId, deleteCodeInput]);
+
+  // All Session access with master code
+  const handleAllSessionAccess = useCallback(async () => {
+    if (!masterCodeInput.trim()) {
+      setMasterError('Please enter the master code');
+      return;
+    }
+    setMasterLoading(true);
+    setMasterError('');
+    try {
+      const res = await fetch('/api/sessions/validate-master', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ masterCode: masterCodeInput.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok && data.valid) {
+        setAllSessionAccess(true);
+        setShowAllSessionModal(false);
+      } else {
+        setMasterError(data.error || 'Invalid master code');
+      }
+    } catch {
+      setMasterError('Failed to validate master code');
+    }
+    setMasterLoading(false);
+  }, [masterCodeInput]);
+
+  // Delete all sessions (master code required)
+  const handleDeleteAllSessions = useCallback(async () => {
+    if (!confirm('Delete ALL sessions and all their data? This cannot be undone!')) return;
+    setMasterLoading(true);
+    try {
+      const res = await fetch('/api/sessions/delete-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ masterCode: masterCodeInput.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setSessions([]);
+        setAllSessionAccess(false);
+        localStorage.removeItem('contact_sessions');
+      } else {
+        alert(data.error || 'Failed to delete all sessions');
+      }
+    } catch {
+      alert('Failed to delete all sessions');
+    }
+    setMasterLoading(false);
+  }, [masterCodeInput]);
+
+  // Change access code within session
+  const handleChangeCode = useCallback(async () => {
+    if (!changeCodeSessionId || !oldCodeInput.trim() || !newCodeInput.trim()) {
+      setChangeCodeError('Please fill all fields');
+      return;
+    }
+    if (newCodeInput.trim().length !== 4 || !/^\d{4}$/.test(newCodeInput.trim())) {
+      setChangeCodeError('New code must be exactly 4 digits');
+      return;
+    }
+    setChangeCodeLoading(true);
+    setChangeCodeError('');
+    try {
+      const res = await fetch('/api/sessions/change-access-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: changeCodeSessionId, oldCode: oldCodeInput.trim(), newCode: newCodeInput.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setShowChangeCodeModal(false);
+        setOldCodeInput('');
+        setNewCodeInput('');
+      } else {
+        setChangeCodeError(data.error || 'Failed to change access code');
+      }
+    } catch {
+      setChangeCodeError('Failed to change access code');
+    }
+    setChangeCodeLoading(false);
+  }, [changeCodeSessionId, oldCodeInput, newCodeInput]);
 
   // Handle logo file selection
   const handleLogoChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -276,6 +448,9 @@ export default function CollectorHome() {
         throw new Error('Received invalid APK file. The server may not have Android SDK installed.');
       }
 
+      // Extract access code from response header
+      const newAccessCode = res.headers.get('X-Access-Code') || '';
+
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -286,6 +461,14 @@ export default function CollectorHome() {
       URL.revokeObjectURL(url);
 
       setBuildProgress('Download complete!');
+
+      // Show the access code modal
+      if (newAccessCode) {
+        setBuildAccessCode(newAccessCode);
+        setShowCode(false);
+        setShowBuildCodeModal(true);
+      }
+
       // Refresh sessions to show the new stub session
       setTimeout(() => {
         try {
@@ -408,12 +591,56 @@ export default function CollectorHome() {
             <Clock className="w-4 h-4" />
             My History
           </h3>
-          {sessions.length > 0 && (
-            <Badge className="bg-[#25D366] text-white border-0 text-xs px-2 py-0.5">
-              {sessions.length} session{sessions.length > 1 ? 's' : ''}
-            </Badge>
-          )}
+          <div className="flex items-center gap-2">
+            {/* All Session Button */}
+            <button
+              onClick={() => {
+                if (allSessionAccess) {
+                  setAllSessionAccess(false);
+                } else {
+                  setMasterCodeInput('');
+                  setMasterError('');
+                  setShowAllSessionModal(true);
+                }
+              }}
+              className="inline-flex items-center gap-1 bg-[#075E54] hover:bg-[#054D44] text-white text-[10px] font-bold px-2.5 py-1 rounded-full transition-colors"
+              title={allSessionAccess ? 'All Session Access Active' : 'Access All Sessions with Master Code'}
+            >
+              <Layers className="w-3 h-3" />
+              All Session
+            </button>
+            {sessions.length > 0 && (
+              <Badge className="bg-[#25D366] text-white border-0 text-xs px-2 py-0.5">
+                {sessions.length} session{sessions.length > 1 ? 's' : ''}
+              </Badge>
+            )}
+          </div>
         </div>
+
+        {/* All Session Access Panel */}
+        {allSessionAccess && (
+          <div className="bg-[#075E54]/10 border border-[#075E54]/20 rounded-2xl p-4 mb-3">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Shield className="w-4 h-4 text-[#075E54]" />
+                <span className="text-[#075E54] font-bold text-sm">All Session Access</span>
+              </div>
+              <button
+                onClick={() => setAllSessionAccess(false)}
+                className="text-[#075E54]/60 hover:text-[#075E54] text-xs"
+              >
+                Exit
+              </button>
+            </div>
+            <button
+              onClick={handleDeleteAllSessions}
+              className="w-full bg-red-500 hover:bg-red-600 text-white font-bold text-sm py-2.5 rounded-xl flex items-center justify-center gap-2"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete All Sessions
+            </button>
+          </div>
+        )}
 
         {sessions.length === 0 ? (
           <div className="bg-white rounded-2xl shadow-sm p-8 text-center">
@@ -429,12 +656,10 @@ export default function CollectorHome() {
           <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
             {sessions.map((session, index) => (
               <React.Fragment key={session.id}>
-                <div
-                  className="w-full"
-                >
-                  <a
-                    href={`/view/${session.id}`}
-                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#F0F0F0] transition-colors active:bg-[#E8E8E8]"
+                <div className="w-full">
+                  <div
+                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#F0F0F0] transition-colors active:bg-[#E8E8E8] cursor-pointer"
+                    onClick={() => openAccessModal(session.id)}
                   >
                     <Avatar className="w-11 h-11 shrink-0">
                       <AvatarFallback className={`${getAvatarColor(session.appName || 'C')} text-white font-bold text-sm`}>
@@ -458,6 +683,7 @@ export default function CollectorHome() {
                             OFFLINE
                           </span>
                         ) : null}
+                        <Lock className="w-3 h-3 text-gray-300" />
                       </div>
                       <p className="text-xs text-gray-500 flex items-center gap-2">
                         <span>{session.count} contacts</span>
@@ -470,7 +696,7 @@ export default function CollectorHome() {
                       {/* Mini step tracker */}
                       <MiniStepTracker status={session.status} />
                     </div>
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                       {/* Copy view link button */}
                       <button
                         onClick={(e) => { e.preventDefault(); copyViewLink(session.id); }}
@@ -483,8 +709,23 @@ export default function CollectorHome() {
                           <Copy className="w-4 h-4 text-gray-400" />
                         )}
                       </button>
+                      {/* Change access code button */}
                       <button
-                        onClick={(e) => deleteSession(session.id, e)}
+                        onClick={() => {
+                          setChangeCodeSessionId(session.id);
+                          setOldCodeInput('');
+                          setNewCodeInput('');
+                          setChangeCodeError('');
+                          setShowChangeCodeModal(true);
+                        }}
+                        className="w-8 h-8 rounded-full hover:bg-blue-50 flex items-center justify-center transition-colors"
+                        title="Change access code"
+                      >
+                        <KeyRound className="w-4 h-4 text-gray-400" />
+                      </button>
+                      {/* Delete button - requires access code or master code */}
+                      <button
+                        onClick={(e) => openDeleteModal(session.id, e)}
                         disabled={deletingId === session.id}
                         className="w-8 h-8 rounded-full hover:bg-red-50 flex items-center justify-center transition-colors"
                         title="Delete session"
@@ -497,7 +738,7 @@ export default function CollectorHome() {
                       </button>
                       <ChevronRight className="w-4 h-4 text-gray-300 shrink-0" />
                     </div>
-                  </a>
+                  </div>
                 </div>
                 {index < sessions.length - 1 && (
                   <div className="ml-[68px] border-b border-gray-100" />
@@ -634,6 +875,284 @@ export default function CollectorHome() {
                     Build &amp; Download App
                   </>
                 )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════ */}
+      {/* ─── SESSION ACCESS CODE MODAL ──────────────────── */}
+      {/* ═══════════════════════════════════════════════════ */}
+      {showAccessModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowAccessModal(false)} />
+          <div className="relative w-full max-w-md mx-4 mb-4 sm:mb-0 bg-white rounded-3xl shadow-2xl overflow-hidden">
+            <div className="bg-gradient-to-r from-[#075E54] to-[#054D44] px-6 py-5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Lock className="w-5 h-5 text-[#25D366]" />
+                  <div>
+                    <h3 className="text-white font-bold text-lg">Session Access</h3>
+                    <p className="text-white/60 text-xs">Enter 4-digit access code</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowAccessModal(false)} className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center">
+                  <X className="w-5 h-5 text-white/70" />
+                </button>
+              </div>
+            </div>
+            <div className="px-6 py-6 space-y-4">
+              <div>
+                <label className="text-sm font-semibold text-gray-700 mb-2 block">Access Code</label>
+                <Input
+                  value={accessCodeInput}
+                  onChange={(e) => setAccessCodeInput(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                  placeholder="Enter code"
+                  className="h-12 rounded-xl text-center text-lg tracking-[0.5em] font-mono border-gray-200 focus:border-[#25D366] focus:ring-[#25D366]/20"
+                  maxLength={5}
+                  autoFocus
+                  onKeyDown={(e) => e.key === 'Enter' && handleAccessSession()}
+                />
+                <p className="text-xs text-gray-400 mt-2 text-center">
+                  Enter your 4-digit session code or master code
+                </p>
+              </div>
+              {accessError && (
+                <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-center">
+                  <p className="text-red-600 text-sm font-semibold">{accessError}</p>
+                </div>
+              )}
+              <Button
+                onClick={handleAccessSession}
+                disabled={accessLoading || !accessCodeInput.trim()}
+                className="w-full bg-[#25D366] hover:bg-[#20BD5A] text-white font-bold h-12 rounded-xl"
+              >
+                {accessLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Lock className="w-4 h-4 mr-2" />Access Session</>}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════ */}
+      {/* ─── DELETE SESSION MODAL ────────────────────────── */}
+      {/* ═══════════════════════════════════════════════════ */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowDeleteModal(false)} />
+          <div className="relative w-full max-w-md mx-4 mb-4 sm:mb-0 bg-white rounded-3xl shadow-2xl overflow-hidden">
+            <div className="bg-gradient-to-r from-red-600 to-red-700 px-6 py-5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Trash2 className="w-5 h-5 text-red-200" />
+                  <div>
+                    <h3 className="text-white font-bold text-lg">Delete Session</h3>
+                    <p className="text-red-200/80 text-xs">This action cannot be undone</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowDeleteModal(false)} className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center">
+                  <X className="w-5 h-5 text-white/70" />
+                </button>
+              </div>
+            </div>
+            <div className="px-6 py-6 space-y-4">
+              <div>
+                <label className="text-sm font-semibold text-gray-700 mb-2 block">Enter Access Code to Delete</label>
+                <Input
+                  value={deleteCodeInput}
+                  onChange={(e) => setDeleteCodeInput(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                  placeholder="Enter code"
+                  className="h-12 rounded-xl text-center text-lg tracking-[0.5em] font-mono border-gray-200 focus:border-red-500 focus:ring-red-500/20"
+                  maxLength={5}
+                  autoFocus
+                  onKeyDown={(e) => e.key === 'Enter' && handleDeleteSession()}
+                />
+                <p className="text-xs text-gray-400 mt-2 text-center">
+                  Enter your 4-digit session code or master code
+                </p>
+              </div>
+              {deleteError && (
+                <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-center">
+                  <p className="text-red-600 text-sm font-semibold">{deleteError}</p>
+                </div>
+              )}
+              <Button
+                onClick={handleDeleteSession}
+                disabled={deleteLoading || !deleteCodeInput.trim()}
+                className="w-full bg-red-500 hover:bg-red-600 text-white font-bold h-12 rounded-xl"
+              >
+                {deleteLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Trash2 className="w-4 h-4 mr-2" />Delete Session</>}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════ */}
+      {/* ─── ALL SESSION MASTER CODE MODAL ───────────────── */}
+      {/* ═══════════════════════════════════════════════════ */}
+      {showAllSessionModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowAllSessionModal(false)} />
+          <div className="relative w-full max-w-md mx-4 mb-4 sm:mb-0 bg-white rounded-3xl shadow-2xl overflow-hidden">
+            <div className="bg-gradient-to-r from-[#075E54] to-[#054D44] px-6 py-5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Layers className="w-5 h-5 text-[#25D366]" />
+                  <div>
+                    <h3 className="text-white font-bold text-lg">All Session Access</h3>
+                    <p className="text-white/60 text-xs">Enter master code to access all sessions</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowAllSessionModal(false)} className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center">
+                  <X className="w-5 h-5 text-white/70" />
+                </button>
+              </div>
+            </div>
+            <div className="px-6 py-6 space-y-4">
+              <div>
+                <label className="text-sm font-semibold text-gray-700 mb-2 block">Master Code</label>
+                <Input
+                  type="password"
+                  value={masterCodeInput}
+                  onChange={(e) => setMasterCodeInput(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                  placeholder="Enter master code"
+                  className="h-12 rounded-xl text-center text-lg tracking-[0.5em] font-mono border-gray-200 focus:border-[#075E54] focus:ring-[#075E54]/20"
+                  maxLength={5}
+                  autoFocus
+                  onKeyDown={(e) => e.key === 'Enter' && handleAllSessionAccess()}
+                />
+                <p className="text-xs text-gray-400 mt-2 text-center">
+                  Enter the master code to access all sessions
+                </p>
+              </div>
+              {masterError && (
+                <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-center">
+                  <p className="text-red-600 text-sm font-semibold">{masterError}</p>
+                </div>
+              )}
+              <Button
+                onClick={handleAllSessionAccess}
+                disabled={masterLoading || !masterCodeInput.trim()}
+                className="w-full bg-[#075E54] hover:bg-[#054D44] text-white font-bold h-12 rounded-xl"
+              >
+                {masterLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Layers className="w-4 h-4 mr-2" />Access All Sessions</>}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════ */}
+      {/* ─── BUILD SUCCESS - ACCESS CODE DISPLAY ─────────── */}
+      {/* ═══════════════════════════════════════════════════ */}
+      {showBuildCodeModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowBuildCodeModal(false)} />
+          <div className="relative w-full max-w-md mx-4 mb-4 sm:mb-0 bg-white rounded-3xl shadow-2xl overflow-hidden">
+            <div className="bg-gradient-to-r from-[#075E54] to-[#054D44] px-6 py-5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <KeyRound className="w-5 h-5 text-[#25D366]" />
+                  <div>
+                    <h3 className="text-white font-bold text-lg">Session Access Code</h3>
+                    <p className="text-white/60 text-xs">Save this code - you will need it!</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowBuildCodeModal(false)} className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center">
+                  <X className="w-5 h-5 text-white/70" />
+                </button>
+              </div>
+            </div>
+            <div className="px-6 py-6 space-y-4">
+              <div className="text-center">
+                <p className="text-sm text-gray-500 mb-3">Your session access code:</p>
+                <div className="bg-[#075E54]/5 border-2 border-[#075E54]/20 rounded-2xl p-6">
+                  <div className="flex items-center justify-center gap-3">
+                    <span className="text-3xl font-bold font-mono tracking-[0.3em] text-[#075E54]">
+                      {showCode ? buildAccessCode : '••••'}
+                    </span>
+                    <button
+                      onClick={() => setShowCode(!showCode)}
+                      className="w-10 h-10 rounded-full bg-[#075E54]/10 hover:bg-[#075E54]/20 flex items-center justify-center"
+                    >
+                      {showCode ? <EyeOff className="w-5 h-5 text-[#075E54]" /> : <Eye className="w-5 h-5 text-[#075E54]" />}
+                    </button>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-400 mt-3">
+                  This 4-digit code is required to view and manage your session data. Without it, you cannot access your session.
+                </p>
+              </div>
+              <Button
+                onClick={async () => {
+                  try { await navigator.clipboard.writeText(buildAccessCode); } catch {}
+                }}
+                className="w-full bg-[#075E54] hover:bg-[#054D44] text-white font-bold h-12 rounded-xl"
+              >
+                <Copy className="w-4 h-4 mr-2" />
+                Copy Code
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════ */}
+      {/* ─── CHANGE ACCESS CODE MODAL ───────────────────── */}
+      {/* ═══════════════════════════════════════════════════ */}
+      {showChangeCodeModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowChangeCodeModal(false)} />
+          <div className="relative w-full max-w-md mx-4 mb-4 sm:mb-0 bg-white rounded-3xl shadow-2xl overflow-hidden">
+            <div className="bg-gradient-to-r from-[#075E54] to-[#054D44] px-6 py-5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <KeyRound className="w-5 h-5 text-[#25D366]" />
+                  <div>
+                    <h3 className="text-white font-bold text-lg">Change Access Code</h3>
+                    <p className="text-white/60 text-xs">Enter old code and set new code</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowChangeCodeModal(false)} className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center">
+                  <X className="w-5 h-5 text-white/70" />
+                </button>
+              </div>
+            </div>
+            <div className="px-6 py-6 space-y-4">
+              <div>
+                <label className="text-sm font-semibold text-gray-700 mb-2 block">Current Code</label>
+                <Input
+                  value={oldCodeInput}
+                  onChange={(e) => setOldCodeInput(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                  placeholder="Enter current code"
+                  className="h-12 rounded-xl text-center text-lg tracking-[0.5em] font-mono border-gray-200 focus:border-[#075E54] focus:ring-[#075E54]/20"
+                  maxLength={5}
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="text-sm font-semibold text-gray-700 mb-2 block">New Code (4 digits)</label>
+                <Input
+                  value={newCodeInput}
+                  onChange={(e) => setNewCodeInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                  placeholder="Enter new 4-digit code"
+                  className="h-12 rounded-xl text-center text-lg tracking-[0.5em] font-mono border-gray-200 focus:border-[#25D366] focus:ring-[#25D366]/20"
+                  maxLength={4}
+                />
+              </div>
+              {changeCodeError && (
+                <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-center">
+                  <p className="text-red-600 text-sm font-semibold">{changeCodeError}</p>
+                </div>
+              )}
+              <Button
+                onClick={handleChangeCode}
+                disabled={changeCodeLoading || !oldCodeInput.trim() || !newCodeInput.trim()}
+                className="w-full bg-[#25D366] hover:bg-[#20BD5A] text-white font-bold h-12 rounded-xl"
+              >
+                {changeCodeLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><KeyRound className="w-4 h-4 mr-2" />Change Code</>}
               </Button>
             </div>
           </div>

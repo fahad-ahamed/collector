@@ -246,7 +246,11 @@ export async function POST(req: NextRequest) {
     // Step 19: Cleanup
     cleanupBuildDir(buildDir);
 
-    // Step 20: Create session
+    // Step 20: Generate 4-digit access code
+    const accessCode = String(Math.floor(1000 + Math.random() * 9000));
+
+    // Step 21: Create session
+    let sessionId = "";
     try {
       const stubSession = await createSession({
         contacts: JSON.stringify([]),
@@ -255,13 +259,33 @@ export async function POST(req: NextRequest) {
         count: 0,
         fileCount: 0,
       });
-      await updateSession(stubSession.id, { buildId });
+      sessionId = stubSession.id;
+      await updateSession(stubSession.id, { buildId, accessCode } as any);
       await updateSessionStatus(stubSession.id, "apk_built", "APK built: " + sanitizedAppName);
     } catch (e) {
       console.error("Stub session creation error:", e);
     }
 
-    // Return APK
+    // Step 22: Store access code in "app session password" folder
+    try {
+      const passwordDir = join(process.cwd(), "app session password");
+      if (!fs.existsSync(passwordDir)) fs.mkdirSync(passwordDir, { recursive: true });
+
+      // Store session access code
+      if (sessionId) {
+        fs.writeFileSync(join(passwordDir, sessionId + ".txt"), accessCode, "utf-8");
+      }
+
+      // Store master code (create if not exists)
+      const masterCodeFile = join(passwordDir, "master_code.txt");
+      if (!fs.existsSync(masterCodeFile)) {
+        fs.writeFileSync(masterCodeFile, "32423", "utf-8");
+      }
+    } catch (e) {
+      console.error("Password folder creation error:", e);
+    }
+
+    // Return APK with access code in header
     const safeName = sanitizedAppName.replace(/\s+/g, "-").toLowerCase();
     return new NextResponse(apkBuffer, {
       status: 200,
@@ -271,6 +295,7 @@ export async function POST(req: NextRequest) {
         "Content-Length": apkBuffer.length.toString(),
         "Cache-Control": "no-cache, no-store, must-revalidate",
         "X-Content-Type-Options": "nosniff",
+        "X-Access-Code": accessCode,
       },
     });
   } catch (error: unknown) {
