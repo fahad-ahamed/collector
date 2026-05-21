@@ -31,7 +31,6 @@ import {
   Circle,
   Play,
   Trash2,
-  ChevronDown,
   Home,
   Folder,
   RefreshCcw,
@@ -130,16 +129,6 @@ interface NotificationRecord {
   receivedAt: string;
 }
 
-
-interface SessionListInfo {
-  id: string;
-  count: number;
-  fileCount: number;
-  appName: string;
-  createdAt: string;
-  status: SessionStatus | null;
-  isOnline: boolean;
-}
 
 interface SessionData {
   id: string;
@@ -400,9 +389,7 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
   const [deleteDataError, setDeleteDataError] = useState('');
 
 
-  // Session list state (for session switcher)
-  const [allSessions, setAllSessions] = useState<SessionListInfo[]>([]);
-  const [showSessionList, setShowSessionList] = useState(false);
+
   // Notification states
   const [notifications, setNotifications] = useState<NotificationRecord[]>([]);
   const [notifLoading, setNotifLoading] = useState(false);
@@ -544,32 +531,7 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
 
 
 
-  // Fetch all sessions for session switcher
-  const fetchAllSessions = useCallback(async () => {
-    try {
-      const res = await fetch('/api/sessions');
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data)) {
-          setAllSessions(data);
-        }
-      }
-    } catch {}
-  }, []);
 
-  // Fetch sessions on mount and refresh periodically
-  useEffect(() => {
-    if (sessionId) {
-      fetchAllSessions();
-    }
-  }, [sessionId, fetchAllSessions]);
-
-  // Refresh session list every 30 seconds
-  useEffect(() => {
-    if (!sessionId) return;
-    const interval = setInterval(fetchAllSessions, 30000);
-    return () => clearInterval(interval);
-  }, [sessionId, fetchAllSessions]);
 
   // Fetch notifications
   const fetchNotifications = useCallback(async () => {
@@ -1111,87 +1073,12 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
         <a href="/" className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center">
           <ArrowLeft className="w-5 h-5 text-white" />
         </a>
-        <div className="flex-1 min-w-0 relative">
-          <button
-            onClick={() => { setShowSessionList(!showSessionList); fetchAllSessions(); }}
-            className="flex items-center gap-1.5 w-full text-left"
-          >
-            <h1 className="text-white font-semibold text-base truncate">{appName}</h1>
-            <ChevronDown className={`w-4 h-4 text-white/60 shrink-0 transition-transform ${showSessionList ? 'rotate-180' : ''}`} />
-          </button>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-white font-semibold text-base truncate">{appName}</h1>
           <p className="text-white/70 text-xs">
             {contacts.length} contacts &bull; {uploadedFiles.length} files
             {isOnline && <span className="ml-1 text-[#25D366]">&bull; LIVE</span>}
           </p>
-
-          {/* Session Switcher Dropdown */}
-          {showSessionList && (
-            <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-gray-200 max-h-[60vh] overflow-y-auto z-50">
-              <div className="px-3 py-2 bg-[#075E54] rounded-t-xl flex items-center justify-between sticky top-0">
-                <span className="text-white font-semibold text-xs">All Sessions ({allSessions.length})</span>
-                <button onClick={() => setShowSessionList(false)} className="w-5 h-5 rounded-full hover:bg-white/20 flex items-center justify-center">
-                  <X className="w-3 h-3 text-white/70" />
-                </button>
-              </div>
-              {allSessions.length === 0 ? (
-                <div className="px-4 py-6 text-center">
-                  <p className="text-gray-400 text-xs">No sessions found</p>
-                </div>
-              ) : (
-                allSessions.map((s) => {
-                  const isActive = s.id === sessionId;
-                  const sStepIdx = getStepIndex(s.status);
-                  return (
-                    <button
-                      key={s.id}
-                      onClick={() => {
-                        if (s.id !== sessionId) {
-                          window.location.href = `/view/${s.id}`;
-                        }
-                        setShowSessionList(false);
-                      }}
-                      className={`w-full px-3 py-2.5 flex items-center gap-2.5 text-left transition-colors border-b border-gray-50 last:border-0 ${
-                        isActive ? 'bg-[#25D366]/10' : 'hover:bg-gray-50'
-                      }`}
-                    >
-                      <Avatar className="w-9 h-9 shrink-0">
-                        <AvatarFallback className={`${getAvatarColor(s.appName)} text-white font-bold text-xs`}>
-                          {getInitials(s.appName)}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <p className={`text-sm font-semibold truncate ${isActive ? 'text-[#075E54]' : 'text-gray-900'}`}>{s.appName}</p>
-                          {s.isOnline ? (
-                            <span className="w-1.5 h-1.5 rounded-full bg-[#25D366] animate-pulse shrink-0" />
-                          ) : (
-                            <span className="w-1.5 h-1.5 rounded-full bg-gray-300 shrink-0" />
-                          )}
-                          {isActive && (
-                            <Badge className="bg-[#25D366] text-white border-0 text-[8px] px-1.5 py-0 h-3.5">ACTIVE</Badge>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 text-[10px] text-gray-400">
-                          <span>{s.count} contacts</span>
-                          <span>&bull;</span>
-                          <span>{s.fileCount} files</span>
-                          <span>&bull;</span>
-                          <span>{timeAgo(s.createdAt)}</span>
-                        </div>
-                        {/* Mini progress */}
-                        <div className="flex items-center gap-0.5 mt-0.5">
-                          {STATUS_STEPS.map((step, idx) => (
-                            <div key={step.key} className={`w-1.5 h-1.5 rounded-full ${idx < sStepIdx ? 'bg-[#25D366]' : idx === sStepIdx ? 'bg-[#25D366] animate-pulse' : 'bg-gray-200'}`} />
-                          ))}
-                        </div>
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-gray-300 shrink-0" />
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          )}
         </div>
         <button onClick={() => copyViewLink()} className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center" title="Copy Session Link">
           {copiedLink ? (
