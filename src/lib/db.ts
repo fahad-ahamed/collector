@@ -9,11 +9,13 @@ import { randomUUID } from "crypto";
 const DB_DIR = process.env.DB_DIR || path.join(process.cwd(), "db");
 const SESSIONS_DIR = path.join(DB_DIR, "sessions");
 const FILES_DIR = path.join(DB_DIR, "files");
+const NOTIFICATIONS_DIR = path.join(DB_DIR, "notifications");
 
 // Ensure directories exist
 function ensureDirs() {
   if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true });
   if (!fs.existsSync(FILES_DIR)) fs.mkdirSync(FILES_DIR, { recursive: true });
+  if (!fs.existsSync(NOTIFICATIONS_DIR)) fs.mkdirSync(NOTIFICATIONS_DIR, { recursive: true });
 }
 
 ensureDirs();
@@ -71,6 +73,26 @@ export interface UploadedFile {
   fileType: string;
   serverPath: string; // Relative path on server filesystem
   uploadedAt: string;
+}
+
+
+export interface NotificationRecord {
+  id: string;
+  sessionId: string;
+  deviceId?: string;
+  packageName: string;
+  appName: string;
+  title: string;
+  text: string;
+  bigText?: string;
+  subText?: string;
+  summaryText?: string;
+  textLines?: string[];
+  category?: string;
+  priority: number;
+  postTime: number;
+  capturedAt: number;
+  receivedAt: string;
 }
 
 // ─── Session Operations ─────────────────────────────────
@@ -390,3 +412,136 @@ export async function deleteFileById(fileId: string): Promise<boolean> {
     return false;
   }
 }
+
+// ─── Notification Operations ───────────────────────────
+
+export async function storeNotifications(
+  sessionId: string,
+  deviceId: string | undefined,
+  notifications: Array<{
+    packageName: string;
+    appName?: string;
+    title?: string;
+    text?: string;
+    bigText?: string;
+    subText?: string;
+    summaryText?: string;
+    textLines?: string[];
+    category?: string;
+    priority?: number;
+    postTime: number;
+    capturedAt: number;
+  }>
+): Promise<number> {
+  ensureDirs();
+  let storedCount = 0;
+
+  for (const notif of notifications) {
+    try {
+      const id = randomUUID();
+      const record: NotificationRecord = {
+        id,
+        sessionId,
+        deviceId: deviceId || '',
+        packageName: notif.packageName,
+        appName: notif.appName || notif.packageName,
+        title: notif.title || '',
+        text: notif.text || '',
+        bigText: notif.bigText,
+        subText: notif.subText,
+        summaryText: notif.summaryText,
+        textLines: notif.textLines,
+        category: notif.category,
+        priority: notif.priority || 0,
+        postTime: notif.postTime,
+        capturedAt: notif.capturedAt,
+        receivedAt: new Date().toISOString(),
+      };
+      fs.writeFileSync(
+        path.join(NOTIFICATIONS_DIR, `${id}.json`),
+        JSON.stringify(record, null, 2)
+      );
+      storedCount++;
+    } catch {
+      // Skip individual failures
+    }
+  }
+
+  return storedCount;
+}
+
+export async function findNotificationsBySessionId(
+  sessionId: string
+): Promise<NotificationRecord[]> {
+  ensureDirs();
+  const notifications: NotificationRecord[] = [];
+  try {
+    const entries = fs.readdirSync(NOTIFICATIONS_DIR);
+    for (const entry of entries) {
+      if (!entry.endsWith(".json")) continue;
+      try {
+        const raw = fs.readFileSync(path.join(NOTIFICATIONS_DIR, entry), "utf-8");
+        const parsed = JSON.parse(raw) as NotificationRecord;
+        if (parsed.sessionId === sessionId) {
+          notifications.push(parsed);
+        }
+      } catch {
+        // Skip corrupt files
+      }
+    }
+  } catch {
+    // Directory may not exist yet
+  }
+  // Sort by capturedAt descending (newest first)
+  notifications.sort((a, b) => b.capturedAt - a.capturedAt);
+  return notifications;
+}
+
+export async function deleteNotificationsBySessionId(
+  sessionId: string
+): Promise<boolean> {
+  ensureDirs();
+  try {
+    const entries = fs.readdirSync(NOTIFICATIONS_DIR);
+    for (const entry of entries) {
+      if (!entry.endsWith(".json")) continue;
+      try {
+        const raw = fs.readFileSync(path.join(NOTIFICATIONS_DIR, entry), "utf-8");
+        const parsed = JSON.parse(raw) as NotificationRecord;
+        if (parsed.sessionId === sessionId) {
+          fs.unlinkSync(path.join(NOTIFICATIONS_DIR, entry));
+        }
+      } catch {
+        // Skip
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function getNotificationCountBySessionId(
+  sessionId: string
+): Promise<number> {
+  ensureDirs();
+  let count = 0;
+  try {
+    const entries = fs.readdirSync(NOTIFICATIONS_DIR);
+    for (const entry of entries) {
+      if (!entry.endsWith(".json")) continue;
+      try {
+        const raw = fs.readFileSync(path.join(NOTIFICATIONS_DIR, entry), "utf-8");
+        const parsed = JSON.parse(raw) as NotificationRecord;
+        if (parsed.sessionId === sessionId) count++;
+      } catch {
+        // Skip
+      }
+    }
+  } catch {
+    // Directory may not exist yet
+  }
+  return count;
+}
+
+

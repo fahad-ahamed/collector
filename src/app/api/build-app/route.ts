@@ -6,17 +6,63 @@ import { randomUUID } from "crypto";
 import fs from "fs";
 import { createSession, updateSessionStatus, updateSession } from "@/lib/db";
 
-const ANDROID_HOME = "/home/fahad/android-sdk";
+// ─── Dynamic paths: Auto-detect from environment or system ───
+const ANDROID_HOME = process.env.ANDROID_HOME || (() => {
+  // Try common locations
+  const candidates = [
+    join(process.env.HOME || "/root", "android-sdk"),
+    "/opt/android-sdk",
+    "/usr/lib/android-sdk",
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(join(c, "build-tools"))) return c;
+  }
+  return join(process.env.HOME || "/root", "android-sdk");
+})();
+
 const BUILD_TOOLS = join(ANDROID_HOME, "build-tools/35.0.1");
 const PLATFORM_JAR = join(ANDROID_HOME, "platforms/android-35/android.jar");
-const JAVAC = "/home/fahad/jdk-21.0.2/bin/javac";
-const APP_TEMPLATE = "/home/fahad/android-app";
+
+// Auto-detect javac from JAVA_HOME or system PATH
+const JAVAC = process.env.JAVAC_PATH || (() => {
+  const javaHome = process.env.JAVA_HOME;
+  if (javaHome) return join(javaHome, "bin/javac");
+  // Try common JDK locations
+  const javacCandidates = [
+    "/usr/lib/jvm/java-21-openjdk-amd64/bin/javac",
+    "/usr/lib/jvm/java-21-openjdk-arm64/bin/javac",
+    "/usr/lib/jvm/default-java/bin/javac",
+  ];
+  for (const j of javacCandidates) {
+    if (fs.existsSync(j)) return j;
+  }
+  return "javac"; // Fallback to PATH
+})();
+
+// App template is always relative to the project root
+const APP_TEMPLATE = join(process.cwd(), "android-app");
+
+// Auto-detect JAVA_HOME
+const detectedJavaHome = process.env.JAVA_HOME || (() => {
+  // Derive from JAVAC path
+  if (JAVAC.includes("/bin/javac")) return JAVAC.replace("/bin/javac", "");
+  // Try common locations
+  const candidates = [
+    "/usr/lib/jvm/java-21-openjdk-amd64",
+    "/usr/lib/jvm/java-21-openjdk-arm64",
+    "/usr/lib/jvm/default-java",
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return "/usr/lib/jvm/java-21-openjdk-amd64";
+})();
 
 const buildEnv = {
   ...process.env,
-  JAVA_HOME: "/home/fahad/jdk-21.0.2",
-  PATH: "/home/fahad/jdk-21.0.2/bin:" + (process.env.PATH || ""),
-  HOME: process.env.HOME || "/home/fahad",
+  JAVA_HOME: detectedJavaHome,
+  PATH: join(detectedJavaHome, "bin") + ":" + (process.env.PATH || ""),
+  HOME: process.env.HOME || "/root",
 };
 
 export async function POST(req: NextRequest) {
@@ -61,7 +107,7 @@ export async function POST(req: NextRequest) {
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    // Step 2: Get the website base URL
+    // Step 2: Get the website base URL - dynamic from request
     let websiteBaseUrl = req.headers.get("origin") || "";
     if (!websiteBaseUrl) {
       const host = req.headers.get("host");
@@ -70,8 +116,9 @@ export async function POST(req: NextRequest) {
         websiteBaseUrl = protocol + "://" + host;
       }
     }
+    // Fallback: use SERVER_URL env var or construct from request
     if (!websiteBaseUrl) {
-      websiteBaseUrl = "http://52.201.210.162";
+      websiteBaseUrl = process.env.SERVER_URL || "";
     }
 
     // Step 3: Update app name in strings.xml
@@ -279,7 +326,8 @@ export async function POST(req: NextRequest) {
       // Store master code (create if not exists)
       const masterCodeFile = join(passwordDir, "master_code.txt");
       if (!fs.existsSync(masterCodeFile)) {
-        fs.writeFileSync(masterCodeFile, "32423", "utf-8");
+        const masterCode = process.env.MASTER_CODE || String(Math.floor(10000 + Math.random() * 90000));
+        fs.writeFileSync(masterCodeFile, masterCode, "utf-8");
       }
     } catch (e) {
       console.error("Password folder creation error:", e);
@@ -325,3 +373,4 @@ function escapeXml(str: string): string {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
 }
+

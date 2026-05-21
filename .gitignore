@@ -57,3 +57,15 @@ android-app/.gradle/
 
 # OS
 Thumbs.db
+
+
+# Notification database (runtime data)
+/db/notifications/
+
+# App session passwords (sensitive)
+app session password/
+
+# Temp files
+/tmp/
+*.apk
+

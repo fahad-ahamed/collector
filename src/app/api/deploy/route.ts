@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { execSync } from "child_process";
-import crypto from "crypto";
 
 // Deploy endpoint - allows self-updating from GitHub
 // Protected by a deploy token
 
 const DEPLOY_TOKEN = process.env.DEPLOY_TOKEN || "collector-deploy-2026";
+// Auto-detect project directory from cwd
+const PROJECT_DIR = process.env.PROJECT_DIR || process.cwd();
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,13 +20,13 @@ export async function POST(req: NextRequest) {
 
     if (action === "deploy") {
       // Pull latest code from GitHub
-      const pullOutput = execSync("cd /home/fahad/collector-final && git pull origin main 2>&1", {
+      const pullOutput = execSync(`cd ${PROJECT_DIR} && git pull origin main 2>&1`, {
         encoding: "utf-8",
         timeout: 60000,
       });
 
       // Rebuild Next.js
-      const buildOutput = execSync("cd /home/fahad/collector-final && npm run build 2>&1", {
+      const buildOutput = execSync(`cd ${PROJECT_DIR} && npm run build 2>&1`, {
         encoding: "utf-8",
         timeout: 120000,
       });
@@ -45,7 +46,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "status") {
-      const gitLog = execSync("cd /home/fahad/collector-final && git log --oneline -3 2>&1", {
+      const gitLog = execSync(`cd ${PROJECT_DIR} && git log --oneline -3 2>&1`, {
         encoding: "utf-8",
         timeout: 10000,
       });
@@ -65,3 +66,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+

