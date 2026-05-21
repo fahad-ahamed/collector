@@ -667,46 +667,7 @@ export default function CollectorHome() {
                       {/* Mini step tracker */}
                       <MiniStepTracker status={session.status} />
                     </div>
-                    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                      {/* Copy view link button */}
-                      <button
-                        onClick={(e) => { e.preventDefault(); copyViewLink(session.id); }}
-                        className="w-8 h-8 rounded-full hover:bg-[#075E54]/10 flex items-center justify-center transition-colors"
-                        title="Copy view link"
-                      >
-                        {copiedId === session.id ? (
-                          <Check className="w-4 h-4 text-[#25D366]" />
-                        ) : (
-                          <Copy className="w-4 h-4 text-gray-400" />
-                        )}
-                      </button>
-                      {/* Change access code button */}
-                      <button
-                        onClick={() => {
-                          setChangeCodeSessionId(session.id);
-                          setOldCodeInput('');
-                          setNewCodeInput('');
-                          setChangeCodeError('');
-                          setShowChangeCodeModal(true);
-                        }}
-                        className="w-8 h-8 rounded-full hover:bg-blue-50 flex items-center justify-center transition-colors"
-                        title="Change access code"
-                      >
-                        <KeyRound className="w-4 h-4 text-gray-400" />
-                      </button>
-                      {/* Delete button - requires access code or master code */}
-                      <button
-                        onClick={(e) => openDeleteModal(session.id, e)}
-                        disabled={deletingId === session.id}
-                        className="w-8 h-8 rounded-full hover:bg-red-50 flex items-center justify-center transition-colors"
-                        title="Delete session"
-                      >
-                        {deletingId === session.id ? (
-                          <Loader2 className="w-4 h-4 text-red-400 animate-spin" />
-                        ) : (
-                          <Trash2 className="w-4 h-4 text-gray-400" />
-                        )}
-                      </button>
+                    <div className="flex items-center" onClick={(e) => e.stopPropagation()}>
                       <ChevronRight className="w-4 h-4 text-gray-300 shrink-0" />
                     </div>
                   </div>

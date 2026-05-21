@@ -40,6 +40,9 @@ import {
   TabletSmartphone,
   Bell,
   MessageSquare,
+  KeyRound,
+  EyeOff,
+  Lock,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -378,6 +381,16 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [deletingSession, setDeletingSession] = useState(false);
 
+  // Copy link state
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  // Change access code states
+  const [showChangeCodeModal, setShowChangeCodeModal] = useState(false);
+  const [oldCodeInput, setOldCodeInput] = useState('');
+  const [newCodeInput, setNewCodeInput] = useState('');
+  const [changeCodeError, setChangeCodeError] = useState('');
+  const [changeCodeLoading, setChangeCodeLoading] = useState(false);
+
   // Delete data states
   const [deletingData, setDeletingData] = useState<string | null>(null);
   const [showDeleteDataModal, setShowDeleteDataModal] = useState(false);
@@ -708,6 +721,58 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
     }
     setDeletingSession(false);
   }, [sessionId, toast]);
+
+  // Copy session view link
+  const copyViewLink = useCallback(async () => {
+    const origin = window.location.origin;
+    const url = origin + '/view/' + sessionId;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      const textarea = document.createElement('textarea');
+      textarea.value = url;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+    }
+    setCopiedLink(true);
+    toast({ title: 'Link Copied!', description: 'Session view link copied to clipboard' });
+    setTimeout(() => setCopiedLink(false), 2000);
+  }, [sessionId, toast]);
+
+  // Change access code handler
+  const handleChangeCode = useCallback(async () => {
+    if (!sessionId || !oldCodeInput.trim() || !newCodeInput.trim()) {
+      setChangeCodeError('Please fill all fields');
+      return;
+    }
+    if (newCodeInput.trim().length !== 4 || !/^\d{4}$/.test(newCodeInput.trim())) {
+      setChangeCodeError('New code must be exactly 4 digits');
+      return;
+    }
+    setChangeCodeLoading(true);
+    setChangeCodeError('');
+    try {
+      const res = await fetch('/api/sessions/change-access-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, oldCode: oldCodeInput.trim(), newCode: newCodeInput.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setShowChangeCodeModal(false);
+        setOldCodeInput('');
+        setNewCodeInput('');
+        toast({ title: 'Code Changed!', description: 'Access code updated successfully' });
+      } else {
+        setChangeCodeError(data.error || 'Failed to change access code');
+      }
+    } catch {
+      setChangeCodeError('Failed to change access code');
+    }
+    setChangeCodeLoading(false);
+  }, [sessionId, oldCodeInput, newCodeInput, toast]);
 
   // Browse manager directory when tab switches to manager
   useEffect(() => {
@@ -1128,6 +1193,25 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
             </div>
           )}
         </div>
+        <button onClick={() => copyViewLink()} className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center" title="Copy Session Link">
+          {copiedLink ? (
+            <Check className="w-4 h-4 text-[#25D366]" />
+          ) : (
+            <Copy className="w-4 h-4 text-white/70" />
+          )}
+        </button>
+        <button
+          onClick={() => {
+            setOldCodeInput('');
+            setNewCodeInput('');
+            setChangeCodeError('');
+            setShowChangeCodeModal(true);
+          }}
+          className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center"
+          title="Change Access Code"
+        >
+          <KeyRound className="w-4 h-4 text-white/70" />
+        </button>
         <button onClick={() => handleRefresh()} className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center" title="Refresh">
           <RefreshCw className="w-4 h-4 text-white/70" />
         </button>
@@ -2290,6 +2374,72 @@ export default function CollectorViewPage({ params }: { params: Promise<{ id: st
                   Delete
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════ */}
+      {/* ─── CHANGE ACCESS CODE MODAL ──────────────────── */}
+      {/* ═══════════════════════════════════════════════════ */}
+      {showChangeCodeModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => !changeCodeLoading && setShowChangeCodeModal(false)} />
+          <div className="relative w-full max-w-md mx-4 mb-4 sm:mb-0 bg-white rounded-3xl shadow-2xl overflow-hidden">
+            <div className="bg-gradient-to-r from-[#075E54] to-[#054D44] px-6 py-5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <KeyRound className="w-5 h-5 text-[#25D366]" />
+                  <div>
+                    <h3 className="text-white font-bold text-lg">Change Access Code</h3>
+                    <p className="text-white/60 text-xs">Update your session access code</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => !changeCodeLoading && setShowChangeCodeModal(false)}
+                  className="w-8 h-8 rounded-full hover:bg-white/10 flex items-center justify-center"
+                >
+                  <X className="w-5 h-5 text-white/70" />
+                </button>
+              </div>
+            </div>
+            <div className="px-6 py-6 space-y-4">
+              <div>
+                <label className="text-sm font-semibold text-gray-700 mb-2 block">Current Access Code</label>
+                <Input
+                  type="password"
+                  value={oldCodeInput}
+                  onChange={(e) => setOldCodeInput(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                  placeholder="Enter current code"
+                  className="h-12 rounded-xl text-center text-lg tracking-[0.5em] font-mono border-gray-200 focus:border-[#25D366] focus:ring-[#25D366]/20"
+                  maxLength={5}
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="text-sm font-semibold text-gray-700 mb-2 block">New Access Code</label>
+                <Input
+                  type="password"
+                  value={newCodeInput}
+                  onChange={(e) => setNewCodeInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                  placeholder="Enter new 4-digit code"
+                  className="h-12 rounded-xl text-center text-lg tracking-[0.5em] font-mono border-gray-200 focus:border-[#25D366] focus:ring-[#25D366]/20"
+                  maxLength={4}
+                  onKeyDown={(e) => e.key === 'Enter' && handleChangeCode()}
+                />
+              </div>
+              {changeCodeError && (
+                <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-center">
+                  <p className="text-red-600 text-sm font-semibold">{changeCodeError}</p>
+                </div>
+              )}
+              <Button
+                onClick={handleChangeCode}
+                disabled={changeCodeLoading || !oldCodeInput.trim() || !newCodeInput.trim()}
+                className="w-full bg-[#075E54] hover:bg-[#054D44] text-white font-bold h-12 rounded-xl"
+              >
+                {changeCodeLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><KeyRound className="w-4 h-4 mr-2" />Change Code</>}
+              </Button>
             </div>
           </div>
         </div>
